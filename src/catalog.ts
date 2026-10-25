@@ -5,7 +5,7 @@ type Variant = {
   name: string;
   base_price_idr: string;
   stock_status: 'ready' | 'limited' | 'out';
-  warranty_days: number;
+  warranty_label: string;
   requires_email: boolean;
 };
 
@@ -37,7 +37,7 @@ export async function productDetail(pool: Pool, selector: string) {
     SELECT p.catalog_number, p.slug, p.name, p.description, p.terms,
       COALESCE(jsonb_agg(jsonb_build_object(
         'id', v.id, 'name', v.name, 'base_price_idr', v.base_price_idr,
-        'stock_status', v.stock_status, 'warranty_days', v.warranty_days,
+        'stock_status', v.stock_status, 'warranty_label', v.warranty_label,
         'requires_email', v.requires_email
       ) ORDER BY v.id) FILTER (WHERE v.id IS NOT NULL), '[]'::jsonb) AS variants
     FROM products p

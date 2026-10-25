@@ -6,6 +6,7 @@ type VariantInput = {
   base_price_idr: number;
   stock_status: 'ready' | 'limited' | 'out';
   warranty_days: number;
+  warranty_label: string;
   requires_email: boolean;
   active: boolean;
 };
@@ -35,11 +36,12 @@ function validate(value: unknown): asserts value is ProductInput {
         !Number.isSafeInteger(v.base_price_idr) || v.base_price_idr <= 0 ||
         !['ready', 'limited', 'out'].includes(v.stock_status) ||
         !Number.isSafeInteger(v.warranty_days) || v.warranty_days < 0 ||
+        typeof v.warranty_label !== 'string' ||
         typeof v.requires_email !== 'boolean' || typeof v.active !== 'boolean') {
       throw new Error('Invalid or duplicate variant');
     }
     names.add(v.name);
-    if (p.active && v.active && (!p.terms.trim() || v.warranty_days === 0)) {
+    if (p.active && v.active && (!p.terms.trim() || v.warranty_days === 0 || !v.warranty_label.trim())) {
       throw new Error('Active variants require final terms and a positive warranty duration');
     }
   }
@@ -59,6 +61,7 @@ try {
         COALESCE(jsonb_agg(jsonb_build_object(
           'name', v.name, 'base_price_idr', v.base_price_idr,
           'stock_status', v.stock_status, 'warranty_days', v.warranty_days,
+          'warranty_label', v.warranty_label,
           'active', v.active
         ) ORDER BY v.id) FILTER (WHERE v.id IS NOT NULL), '[]'::jsonb) AS variants
       FROM products p LEFT JOIN variants v ON v.product_id = p.id
@@ -82,14 +85,16 @@ try {
       `, [product.catalog_number, product.slug, product.name, product.description, product.terms, product.active]);
       for (const variant of product.variants) {
         await client.query(`
-          INSERT INTO variants (product_id, name, base_price_idr, stock_status, warranty_days, requires_email, active)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          INSERT INTO variants (product_id, name, base_price_idr, stock_status, warranty_days, warranty_label, requires_email, active)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           ON CONFLICT (product_id, name) DO UPDATE SET
             base_price_idr = EXCLUDED.base_price_idr, stock_status = EXCLUDED.stock_status,
-            warranty_days = EXCLUDED.warranty_days, requires_email = EXCLUDED.requires_email,
+            warranty_days = EXCLUDED.warranty_days, warranty_label = EXCLUDED.warranty_label,
+            requires_email = EXCLUDED.requires_email,
             active = EXCLUDED.active, updated_at = now()
         `, [saved.rows[0].id, variant.name, variant.base_price_idr,
-          variant.stock_status, variant.warranty_days, variant.requires_email, variant.active]);
+          variant.stock_status, variant.warranty_days, variant.warranty_label,
+          variant.requires_email, variant.active]);
       }
       await client.query(
         'UPDATE variants SET active = false, updated_at = now() WHERE product_id = $1 AND NOT (name = ANY($2::text[]))',
