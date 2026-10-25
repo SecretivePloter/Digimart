@@ -1,0 +1,26 @@
+{
+  "catalog_number": 1,
+  "slug": "youtube",
+  "name": "YOUTUBE PREMIUM + YT MUSIC",
+  "description": "ANTI LIMIT🔥\nFAMILY PLAN",
+  "terms": "Gmail bukan GSuite. Akun dari pembeli. 25–30 hari dihitung 1 bulan. Head dapat mengundang hingga 5 orang. Lupa kata sandi bukan garansi seller. Tanyakan stok sebelum order. Ketentuan garansi final belum ditetapkan.",
+  "active": false,
+  "variants": [
+    {
+      "name": "Head 1 Bulan",
+      "base_price_idr": 25000,
+      "stock_status": "out",
+      "warranty_days": 0,
+      "requires_email": true,
+      "active": false
+    },
+    {
+      "name": "Invite 1 Bulan",
+      "base_price_idr": 12000,
+      "stock_status": "out",
+      "warranty_days": 0,
+      "requires_email": true,
+      "active": false
+    }
+  ]
+}

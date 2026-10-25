@@ -6,6 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "db:migrate": "node --env-file=.env.local dist/migrate.js",
+    "catalog:import": "node --env-file=.env.local dist/catalog-admin.js import",
+    "catalog:inspect": "node --env-file=.env.local dist/catalog-admin.js inspect",
     "start": "node --env-file=.env.local dist/server.js",
     "smoke": "node --env-file=.env.local dist/smoke.js"
   },
