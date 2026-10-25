@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "db:migrate": "node --env-file=.env.local dist/migrate.js",
     "start": "node --env-file=.env.local dist/server.js",
     "smoke": "node --env-file=.env.local dist/smoke.js"
   },
