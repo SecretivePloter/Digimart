@@ -1,16 +1,33 @@
 import { createServer } from 'node:http';
 import { database } from './services.js';
+import { listCatalog, productDetail } from './catalog.js';
 
 const pool = database();
 const server = createServer(async (request, response) => {
-  if (request.method !== 'GET' || request.url !== '/health') {
+  const url = new URL(request.url ?? '/', 'http://localhost');
+  if (request.method !== 'GET') {
     response.writeHead(404).end('Not found');
     return;
   }
   try {
-    const result = await pool.query('SELECT 1 AS connected');
-    response.writeHead(200, { 'content-type': 'application/json' })
-      .end(JSON.stringify({ ok: result.rows[0]?.connected === 1 }));
+    let body: unknown;
+    if (url.pathname === '/health') {
+      const result = await pool.query('SELECT 1 AS connected');
+      body = { ok: result.rows[0]?.connected === 1 };
+    } else if (url.pathname === '/catalog') {
+      body = await listCatalog(pool);
+    } else if (/^\/catalog\/[^/]+$/.test(url.pathname)) {
+      const selector = decodeURIComponent(url.pathname.slice('/catalog/'.length));
+      body = await productDetail(pool, selector);
+      if (!body) {
+        response.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'Product not found' }));
+        return;
+      }
+    } else {
+      response.writeHead(404).end('Not found');
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify(body));
   } catch {
     response.writeHead(503, { 'content-type': 'application/json' })
       .end(JSON.stringify({ ok: false }));
