@@ -2,10 +2,35 @@ import { createServer } from 'node:http';
 import { database } from './services.js';
 import { listCatalog, productDetail } from './catalog.js';
 import { calculateQuote, feePolicyFromEnv } from './quote.js';
+import { handlePaymentNotice, midtransFromEnv } from './orders.js';
+import type { MidtransNotification } from './midtrans.js';
 
 const pool = database();
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
+  if (request.method === 'POST' && url.pathname === '/webhooks/midtrans') {
+    try {
+      let body = '';
+      for await (const chunk of request) {
+        body += chunk.toString();
+        if (body.length > 65536) {
+          response.writeHead(413).end('Payload too large');
+          return;
+        }
+      }
+      const notice = JSON.parse(body) as MidtransNotification;
+      const midtrans = midtransFromEnv();
+      await handlePaymentNotice(pool, notice, process.env.MIDTRANS_SERVER_KEY!,
+        orderId => midtrans.getStatus(orderId));
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true }));
+    } catch (error) {
+      const invalid = error instanceof SyntaxError ||
+        (error instanceof Error && /Invalid Midtrans signature|Payment details mismatch|Unknown order|Unknown transaction/.test(error.message));
+      response.writeHead(invalid ? 400 : 503, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ ok: false }));
+    }
+    return;
+  }
   if (request.method !== 'GET') {
     response.writeHead(404).end('Not found');
     return;

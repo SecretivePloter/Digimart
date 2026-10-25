@@ -77,4 +77,14 @@ export class MidtransClient {
         new URL(qrUrl).protocol !== 'https:') throw new Error('Midtrans did not return a valid QR URL');
     return { orderId, transactionId: result.transaction_id, qrUrl, amountIdr };
   }
+
+  async getStatus(orderId: string): Promise<MidtransNotification> {
+    if (!/^[A-Za-z0-9_-]{1,50}$/.test(orderId)) throw new Error('Invalid order ID');
+    const response = await this.request(`${this.baseUrl}/v2/${encodeURIComponent(orderId)}/status`, {
+      headers: { authorization: `Basic ${Buffer.from(this.serverKey + ':').toString('base64')}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error(`Midtrans status failed (HTTP ${response.status})`);
+    return await response.json() as MidtransNotification;
+  }
 }
