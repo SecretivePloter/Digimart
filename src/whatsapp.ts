@@ -1,4 +1,4 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState } from '@whiskeysockets/baileys';
+import makeWASocket, { DisconnectReason, normalizeMessageContent, useMultiFileAuthState } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
 import type { Pool } from 'pg';
 import { database } from './services.js';
@@ -16,16 +16,14 @@ function bodyText(message: {
   return (message.conversation ?? message.extendedTextMessage?.text ?? '').trim();
 }
 
-async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, text: string) {
+async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, sessionId: string, text: string) {
   if (!text) return;
-  const phone = jid.split('@')[0];
-  if (!/^[1-9][0-9]{7,14}$/.test(phone)) return;
   const lower = text.toLowerCase().trim();
   if (lower === 'list') {
     await sock.sendMessage(jid, { text: formatCatalog(await listCatalog(pool)) });
     return;
   }
-  const session = sessions.get(phone);
+  const session = sessions.get(sessionId);
   if (/^\d+$/.test(lower) && session?.product) {
     const selected = session.product.variants[Number(lower) - 1];
     if (selected) {
@@ -40,7 +38,7 @@ async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, text
   if (namedSelection) {
     const named = await productDetail(pool, namedSelection[1]);
     if (named) {
-      sessions.set(phone, { product: named });
+      sessions.set(sessionId, { product: named });
       await sock.sendMessage(jid, { text: formatProduct(named) });
       return;
     }
@@ -57,7 +55,7 @@ async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, text
   const selectedRow = listing.find(row => row.name.toLowerCase() === lower);
   const product = await productDetail(pool, selectedRow?.slug ?? lower);
   if (product) {
-    sessions.set(phone, { product });
+    sessions.set(sessionId, { product });
     await sock.sendMessage(jid, { text: formatProduct(product) });
     return;
   }
@@ -127,8 +125,19 @@ async function connect() {
     if (type !== 'notify') return;
     for (const message of messages) {
       const jid = message.key.remoteJid;
-      if (!jid?.endsWith('@s.whatsapp.net') || message.key.fromMe || !message.message) continue;
-      void incoming(sock, jid, bodyText(message.message)).catch(console.error);
+      if (!jid || message.key.fromMe || !message.message) continue;
+      if (!jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@lid')) continue;
+      const alternate = message.key.remoteJidAlt;
+      const phoneJid = jid.endsWith('@s.whatsapp.net') ? jid
+        : alternate?.endsWith('@s.whatsapp.net') ? alternate : undefined;
+      const phone = phoneJid?.split('@')[0];
+      // A LID is not a phone number. Keep the chat usable even when WhatsApp
+      // does not supply its alternate phone JID.
+      const sessionId = phone && /^[1-9][0-9]{7,14}$/.test(phone) ? phone : jid;
+      const content = normalizeMessageContent(message.message);
+      const body = content && bodyText(content);
+      console.log(`Pesan masuk: ${jid.endsWith('@lid') ? 'LID' : 'nomor'}, teks: ${body ? 'ya' : 'tidak'}`);
+      if (body) void incoming(sock, jid, sessionId, body).catch(console.error);
     }
   });
   const timer = setInterval(() => {
