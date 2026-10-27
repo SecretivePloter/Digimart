@@ -37,21 +37,36 @@ async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, sess
       return;
     }
   }
+  if (lower === 'konfirmasi' || lower === 'konfirmasi beli' || lower === 'payment') {
+    await sock.sendMessage(jid, {
+      text: session?.variantId
+        ? 'Varian sudah dipilih. Pembayaran WhatsApp belum diaktifkan; admin sedang menyiapkan koneksi Midtrans.'
+        : 'Pilih produk dan nomor variannya dahulu, lalu ketik *konfirmasi beli*.',
+    });
+    return;
+  }
   const namedSelection = lower.match(/^(?:beli|konfirmasi beli)\s+(.+)$/);
   if (namedSelection) {
-    const named = await productDetail(pool, namedSelection[1]);
+    const selector = namedSelection[1].trim();
+    const listing = await listCatalog(pool);
+    const row = listing.find(item => item.name.toLowerCase() === selector ||
+      item.slug.toLowerCase() === selector || String(item.catalog_number) === selector);
+    const named = await productDetail(pool, row?.slug ?? selector);
     if (named) {
+      if (lower.startsWith('konfirmasi beli ') && session?.variantId &&
+          session.product?.slug === named.slug) {
+        await sock.sendMessage(jid, { text: 'Varian sudah dipilih. Pembayaran WhatsApp belum diaktifkan; admin sedang menyiapkan koneksi Midtrans.' });
+        return;
+      }
       sessions.set(sessionId, { product: named });
       await sock.sendMessage(jid, { text: formatProduct(named) });
       return;
     }
+    await sock.sendMessage(jid, { text: 'Produk tidak ditemukan. Ketik *list* untuk melihat katalog.' });
+    return;
   }
-  if (lower === 'payment' || lower === 'konfirmasi beli') {
-    await sock.sendMessage(jid, {
-      text: session?.variantId
-        ? 'Varian telah dipilih. Pembuatan QRIS lewat WhatsApp akan diaktifkan setelah uji koneksi dan tarif Midtrans selesai.'
-        : 'Pilih produk dan varian dahulu. Ketik *list* untuk melihat katalog.',
-    });
+  if (lower === 'beli') {
+    await sock.sendMessage(jid, { text: 'Ketik *beli nama produk* untuk melihat detail produk.' });
     return;
   }
   const listing = await listCatalog(pool);
