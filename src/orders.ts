@@ -41,6 +41,23 @@ export async function createOrder(pool: Pool, phone: string, variantId: string, 
       ON CONFLICT (wa_number) DO UPDATE SET last_seen_at = now()
       RETURNING id
     `, [phone]);
+    // Reuse an open order after repeated commands or an ambiguous network timeout.
+    const existing=await client.query<{public_id:string;status:string;total_idr:string;qr_code_url:string|null}>(`
+      SELECT o.public_id,o.status,o.total_idr,p.qr_code_url
+      FROM orders o LEFT JOIN payments p ON p.order_id=o.id
+      WHERE o.customer_id=$1 AND o.variant_id=$2
+        AND o.status IN ('awaiting_stock','payment_setup','awaiting_payment')
+      ORDER BY o.created_at DESC LIMIT 1 FOR UPDATE OF o
+    `,[customer.rows[0].id,selected.id]);
+    if(existing.rows[0]) {
+      const order=existing.rows[0];
+      await client.query('COMMIT');
+      if(order.status==='awaiting_payment' && order.qr_code_url)
+        return {publicId:order.public_id,status:'awaiting_payment' as const,totalIdr:Number(order.total_idr),qrUrl:order.qr_code_url};
+      if(order.status==='awaiting_stock')
+        return {publicId:order.public_id,status:'awaiting_stock' as const,totalIdr:Number(order.total_idr)};
+      return {publicId:order.public_id,status:'payment_setup' as const,totalIdr:Number(order.total_idr)};
+    }
     publicId = 'ORD-' + randomBytes(8).toString('hex').toUpperCase();
     await client.query(`
       INSERT INTO orders(public_id, customer_id, variant_id, product_name_snapshot,
@@ -92,9 +109,12 @@ export async function handlePaymentNotice(
     const result = await client.query<{
       id: string; status: string; total_idr: string; phone: string;
       variant_name_snapshot: string;
+      requires_email: boolean;
     }>(`
-      SELECT o.id, o.status, o.total_idr, c.wa_number AS phone, o.variant_name_snapshot
+      SELECT o.id, o.status, o.total_idr, c.wa_number AS phone,
+        o.variant_name_snapshot, v.requires_email
       FROM orders o JOIN customers c ON c.id = o.customer_id
+      JOIN variants v ON v.id=o.variant_id
       WHERE o.public_id = $1 FOR UPDATE OF o
     `, [notice.order_id]);
     const order = result.rows[0];
@@ -115,7 +135,7 @@ export async function handlePaymentNotice(
         UPDATE orders SET status = 'awaiting_customer_data', paid_at = now()
         WHERE id = $1
       `, [order.id]);
-      await enqueue(client, order.phone, 'request_email', {
+      if(order.requires_email) await enqueue(client, order.phone, 'request_email', {
         order_id: notice.order_id, text: 'Pembayaran berhasil. Kirim Gmail Anda untuk diproses admin.',
       });
       await enqueueAdmins(client, 'order_paid', { order_id: notice.order_id, phone: order.phone, variant: order.variant_name_snapshot });

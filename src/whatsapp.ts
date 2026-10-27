@@ -5,9 +5,11 @@ import type { Pool } from 'pg';
 import { database } from './services.js';
 import { listCatalog, productDetail } from './catalog.js';
 import { formatCatalog, formatProduct } from './wa-format.js';
+import { createOrder, midtransFromEnv } from './orders.js';
+import { feePolicyFromEnv } from './quote.js';
 
 const pool = database();
-const sessions = new Map<string, { product: Awaited<ReturnType<typeof productDetail>>; variantId?: string }>();
+const sessions = new Map<string, { product: Awaited<ReturnType<typeof productDetail>>; variantId?: string; ordering?: boolean }>();
 let stopped = false;
 
 function bodyText(message: {
@@ -38,11 +40,42 @@ async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, sess
     }
   }
   if (lower === 'konfirmasi' || lower === 'konfirmasi beli' || lower === 'payment') {
-    await sock.sendMessage(jid, {
-      text: session?.variantId
-        ? 'Varian sudah dipilih. Pembayaran WhatsApp belum diaktifkan; admin sedang menyiapkan koneksi Midtrans.'
-        : 'Pilih produk dan nomor variannya dahulu, lalu ketik *konfirmasi beli*.',
-    });
+    if (!session?.variantId || !session.product) {
+      await sock.sendMessage(jid, { text: 'Pilih produk dan nomor variannya dahulu, lalu ketik *konfirmasi beli*.' });
+      return;
+    }
+    if (session.ordering) { await sock.sendMessage(jid,{text:'Pesanan sedang diproses. Tunggu sebentar.'}); return; }
+    const variant=session.product.variants.find(v=>v.id===session.variantId);
+    if (!variant || variant.stock_status==='out') {
+      await sock.sendMessage(jid,{text:'Stok varian ini habis. Hubungi admin untuk memastikan ketersediaan sebelum memesan.'}); return;
+    }
+    session.ordering=true;
+    try {
+      // Do not create an order/charge unless all merchant-specific sandbox settings exist.
+      feePolicyFromEnv();
+      if ((process.env.MIDTRANS_ENV ?? 'sandbox')!=='sandbox') {
+        throw new Error('WhatsApp checkout is sandbox-only until production verification is complete.');
+      }
+      const order=await createOrder(pool,sessionId,variant.id,midtransFromEnv());
+      if (order.status==='awaiting_stock') {
+        await sock.sendMessage(jid,{text:`Pesanan *${order.publicId}* menunggu konfirmasi stok admin. QRIS belum dibuat.`});
+      } else if (order.status==='payment_setup') {
+        await sock.sendMessage(jid,{text:`Pesanan *${order.publicId}* sedang diperiksa status pembayarannya. Jangan membuat pesanan baru untuk varian ini; hubungi admin.`});
+      } else if (order.status==='awaiting_payment' && order.qrUrl) {
+        await sock.sendMessage(jid,{text:`*QRIS pesanan Digimart*\nID: *${order.publicId}*\nProduk: ${session.product.name}\nVarian: ${variant.name}\nTotal: *Rp${order.totalIdr.toLocaleString('id-ID')}*\nBerlaku 15 menit. Selesaikan pembayaran melalui QRIS ini:\n${order.qrUrl}\n\nJika waktu habis, buat pesanan baru.`});
+      }
+    } catch(error) {
+      console.error('Pembuatan pesanan sandbox gagal:',error);
+      const message=error instanceof Error?error.message:'';
+      const text=message.includes('MIDTRANS_SERVER_KEY')
+        ? 'Pembayaran belum siap: MIDTRANS_SERVER_KEY belum diatur di .env.local.'
+        : message.includes('MIDTRANS_FEE_')
+          ? 'Pembayaran belum siap: isi MIDTRANS_FEE_BPS dan MIDTRANS_FEE_FIXED_IDR sesuai tarif akun merchant.'
+          : message.includes('sandbox-only')
+            ? 'Pembayaran WhatsApp sementara hanya dibuka untuk Midtrans sandbox.'
+            : 'Pesanan belum dapat dibuat. Periksa konfigurasi Midtrans sandbox atau hubungi admin.';
+      await sock.sendMessage(jid,{text});
+    } finally { session.ordering=false; }
     return;
   }
   const namedSelection = lower.match(/^(?:beli|konfirmasi beli)\s+(.+)$/);
