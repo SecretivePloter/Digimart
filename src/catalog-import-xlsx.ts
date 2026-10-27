@@ -41,7 +41,10 @@ if (!apply) {
       }
       await saveCatalogProduct(client,p,'local-import');
     }
-    await client.query('COMMIT');\n    console.log(publishDescribed\n      ? `Berhasil mengimpor ${products.length} produk; ${products.filter(p => p.active).length} produk berdeskripsi dipublikasikan dengan stok Ready.`\n      : `Berhasil mengimpor ${products.length} produk sebagai draf.`);
+    await client.query('COMMIT');
+    console.log(publishDescribed
+      ? `Berhasil mengimpor ${products.length} produk; ${products.filter(p => p.active).length} produk berdeskripsi dipublikasikan dengan stok Ready.`
+      : `Berhasil mengimpor ${products.length} produk sebagai draf.`);
   } catch(e) { await client.query('ROLLBACK'); throw e; }
   finally { client.release(); await pool.end(); }
 }
