@@ -16,7 +16,8 @@ if (!process.argv.includes('--apply')) {
     for (const p of products) {
       const old=existing.find(x=>x.slug===p.slug);
       if (old) {
-        p.id=old.id; p.revision=old.revision; p.description=old.description; p.terms=old.terms;
+        p.id=old.id; p.revision=old.revision;
+        p.description=p.description || old.description; p.terms=old.terms;
         for (const v of p.variants) {
           const previous=old.variants.find(x=>x.name.toLowerCase()===v.name.toLowerCase());
           if (previous) Object.assign(v,{id:previous.id,warranty_days:previous.warranty_days,

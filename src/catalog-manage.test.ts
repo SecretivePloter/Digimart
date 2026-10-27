@@ -14,13 +14,14 @@ import { listCatalog, productDetail } from './catalog.js';
 
 test('spreadsheet import combines repeated products and excludes confidential fields and notes',()=>{
   const xml=`<worksheet><sheetData><row r="3"><c r="C3" t="inlineStr"><is><t>Nama Item</t></is></c><c r="D3" t="inlineStr"><is><t>Varian</t></is></c><c r="F3" t="inlineStr"><is><t>Harga</t></is></c></row>
-    <row r="4"><c r="C4" t="inlineStr"><is><t>Example</t></is></c><c r="D4" t="inlineStr"><is><t>Basic</t></is></c><c r="E4"><v>123</v></c><c r="F4"><v>9000</v></c><c r="H4" t="inlineStr"><is><t>SECRET SELLER</t></is></c></row>
+    <row r="4"><c r="C4" t="inlineStr"><is><t>Example</t></is></c><c r="D4" t="inlineStr"><is><t>Basic</t></is></c><c r="E4"><v>123</v></c><c r="F4"><v>9000</v></c><c r="H4" t="inlineStr"><is><t>SECRET SELLER</t></is></c><c r="I4" t="inlineStr"><is><t>Judul\\nParagraf\\n\\nPenutup</t></is></c></row>
     <row r="5"><c r="C5" t="inlineStr"><is><t>Example</t></is></c><c r="D5" t="inlineStr"><is><t>Plus</t></is></c><c r="F5"><v>20000</v></c></row>
     <row r="6"><c r="C6" t="inlineStr"><is><t>PRIVATE NOTE</t></is></c></row></sheetData></worksheet>`;
   const data=productsFromWorkbook(zipSync({'xl/worksheets/sheet1.xml':strToU8(xml)}));
   assert.equal(data.length,1);assert.equal(data[0].variants.length,2);
   assert.equal(data[0].variants[0].base_price_idr,9000);
   assert.equal(data[0].active,false);assert.equal(data[0].variants[0].stock_status,'out');
+  assert.equal(data[0].description,'Judul\nParagraf\n\nPenutup');
   assert.doesNotMatch(JSON.stringify(data),/SECRET|PRIVATE|123/);
 });
 

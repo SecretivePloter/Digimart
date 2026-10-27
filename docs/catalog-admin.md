@@ -18,9 +18,9 @@ Perintah tersebut hanya memeriksa file dan menampilkan jumlah produk/varian. Unt
 
 `npm run catalog:import-xlsx -- "private/produk.xlsx" --apply`
 
-Format workbook: header Nama Item, Varian, Harga pada kolom C, D, F di worksheet pertama. Nama produk yang kosong mengikuti produk sebelumnya; nama produk berulang digabung. Biaya produksi, margin, komentar, dan referensi seller tidak disimpan di database aplikasi. File asli tetap menjadi sumber internal untuk informasi tersebut.
+Format workbook: header Nama Item, Varian, Harga pada kolom C, D, F di worksheet pertama. Deskripsi Produk pada kolom I (opsional) diimpor; tanda literal `\n` menjadi baris baru di pesan WhatsApp. Nama produk yang kosong mengikuti produk sebelumnya; nama produk berulang digabung. Biaya produksi, margin, komentar, dan referensi seller tidak disimpan di database aplikasi. File asli tetap menjadi sumber internal untuk informasi tersebut.
 
-Impor menambahkan atau memperbarui produk berdasarkan slug. Nomor katalog lama dipertahankan, produk baru mendapatkan nomor berikutnya. Harga dan nama varian mengikuti workbook. Produk masuk sebagai draf, varian nonaktif dan stok habis; impor ulang juga mengembalikannya ke draf. Deskripsi/ketentuan yang telah diisi dipertahankan. Varian lama yang tidak tercantum diarsipkan, bukan dihapus. Produk yang sama sekali tidak ada dalam file tetap dipertahankan. Tidak ada durasi garansi yang ditebak dari nama paket; aturan YouTube yang telah disepakati dipertahankan.
+Impor menambahkan atau memperbarui produk berdasarkan slug. Nomor katalog lama dipertahankan, produk baru mendapatkan nomor berikutnya. Harga dan nama varian mengikuti workbook. Produk masuk sebagai draf, varian nonaktif dan stok habis; impor ulang juga mengembalikannya ke draf. Deskripsi yang terisi di Excel memperbarui katalog; bila kosong, deskripsi lama dipertahankan. Ketentuan yang telah diisi admin dipertahankan. Varian lama yang tidak tercantum diarsipkan, bukan dihapus. Produk yang sama sekali tidak ada dalam file tetap dipertahankan. Tidak ada durasi garansi yang ditebak dari nama paket; aturan YouTube yang telah disepakati dipertahankan.
 
 ## Dashboard
 

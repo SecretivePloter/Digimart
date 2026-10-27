@@ -22,7 +22,7 @@ export function productsFromWorkbook(data: Uint8Array): CatalogProduct[] {
     const cells: Record<string,string> = {};
     for (const cell of arr(row.c)) {
       const col = String(cell['@_r']).replace(/\d/g,'');
-      if (!['C','D','F'].includes(col)) continue;
+      if (!['C','D','F','I'].includes(col)) continue;
       cells[col] = (cell['@_t']==='s' ? strings[Number(cell.v)] : cell.is ? text(cell.is) : text(cell.v)).trim();
     }
     if (cells.C==='Nama Item' && cells.D==='Varian' && cells.F==='Harga') { headersFound=true; continue; }
@@ -33,6 +33,7 @@ export function productsFromWorkbook(data: Uint8Array): CatalogProduct[] {
       if (!current) { current={slug,name:cells.C,description:'',terms:'',active:false,variants:[]}; products.set(slug,current); }
     }
     if (!current) throw new Error('Varian tanpa nama produk.');
+    if (cells.I) current.description=cells.I.replace(/\\n/g,'\n');
     const price=Number(cells.F);
     if (!Number.isSafeInteger(price) || price <= 0) throw new Error('Harga jual kosong atau tidak valid pada baris '+row['@_r']);
     if (current.variants.some(v=>v.name.toLowerCase()===cells.D.toLowerCase())) throw new Error('Nama varian duplikat.');
