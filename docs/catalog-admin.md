@@ -26,7 +26,7 @@ Impor menambahkan atau memperbarui produk berdasarkan slug. Nomor katalog lama d
 
 Jalankan `npm start`, buka `http://localhost:3000/admin`, lalu masuk memakai nomor admin dan password dari langkah setup. Kredensial tidak disimpan di localStorage/cookie. Tombol Keluar menghapus kredensial dari memori halaman.
 
-Tersedia daftar produk, tambah, edit nama/deskripsi/ketentuan, tambah/edit/nonaktifkan varian, harga, stok, durasi garansi internal, label garansi pelanggan, kebutuhan email, publikasi, dan arsip produk. Slug produk yang sudah disimpan tidak dapat diubah. Publikasi memerlukan deskripsi, ketentuan, minimal satu varian aktif, dan label garansi setiap varian aktif. Isi label Tanpa garansi dan durasi 0 hanya jika memang kebijakan produk demikian.
+Tersedia daftar produk, tambah, edit nama/deskripsi/ketentuan, tambah/edit/nonaktifkan varian, harga, stok, durasi garansi internal, label garansi pelanggan, kebutuhan email, publikasi, dan arsip produk. Slug produk yang sudah disimpan tidak dapat diubah. Publikasi memerlukan deskripsi dan minimal satu varian aktif. Ketentuan tambahan dan garansi opsional. Kosongkan label garansi dan isi durasi 0 untuk varian tanpa garansi.
 
 Untuk akses di luar komputer lokal, deploy dengan HTTPS dan set `ADMIN_PUBLIC_ORIGIN=https://domain-anda` tanpa trailing slash. Reverse proxy harus memblokir akses HTTP langsung ke backend. Jangan membuka port HTTP backend ke internet. Sesuaikan PORT bila tidak menggunakan 3000.
 

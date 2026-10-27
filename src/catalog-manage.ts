@@ -26,9 +26,8 @@ export function validateProduct(value: unknown): asserts value is CatalogProduct
       throw new Error('Data varian tidak valid atau duplikat.');
     names.add(v.name.trim().toLowerCase()); if (v.id) ids.add(v.id);
   }
-  if (p.active && (!p.description.trim() || !p.terms.trim() || !p.variants.some(v=>v.active) ||
-      p.variants.some(v=>v.active && !v.warranty_label.trim())))
-    throw new Error('Lengkapi deskripsi, ketentuan, label garansi dan minimal satu varian aktif sebelum publikasi.');
+  if (p.active && (!p.description.trim() || !p.variants.some(v=>v.active)))
+    throw new Error('Lengkapi deskripsi dan aktifkan minimal satu varian sebelum publikasi.');
 }
 export async function catalogForAdmin(pool: Pool) {
   const result = await pool.query(`SELECT p.id::text, p.catalog_number, p.slug, p.name, p.description,
