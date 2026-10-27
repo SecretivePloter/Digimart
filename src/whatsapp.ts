@@ -1,4 +1,5 @@
 import makeWASocket, { DisconnectReason, normalizeMessageContent, useMultiFileAuthState } from '@whiskeysockets/baileys';
+import { adminMessage } from './admin-wa.js';
 import qrcode from 'qrcode-terminal';
 import type { Pool } from 'pg';
 import { database } from './services.js';
@@ -18,6 +19,8 @@ function bodyText(message: {
 
 async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, sessionId: string, text: string) {
   if (!text) return;
+  const adminReply=await adminMessage(pool,sessionId,text);
+  if (adminReply!==null) { await sock.sendMessage(jid,{text:adminReply}); return; }
   const lower = text.toLowerCase().trim();
   if (lower === 'list') {
     await sock.sendMessage(jid, { text: formatCatalog(await listCatalog(pool)) });

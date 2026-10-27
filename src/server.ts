@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { adminHttp } from './admin-http.js';
 import { database } from './services.js';
 import { listCatalog, productDetail } from './catalog.js';
 import { calculateQuote, feePolicyFromEnv } from './quote.js';
@@ -8,6 +9,8 @@ import type { MidtransNotification } from './midtrans.js';
 const pool = database();
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
+  try { if (await adminHttp(pool,request,response,url.pathname)) return; }
+  catch { response.writeHead(503).end('Admin service unavailable'); return; }
   if (request.method === 'POST' && url.pathname === '/webhooks/midtrans') {
     try {
       let body = '';

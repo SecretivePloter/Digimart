@@ -4,3 +4,9 @@ dist/
 .env.local
 .neon
 .wa-auth/
+
+# Confidential catalog sources stay on the operator computer.
+private/
+*.xlsx
+*.xls
+*.catalog.json
