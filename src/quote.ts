@@ -3,7 +3,7 @@ export type FeePolicy = { basisPoints: number; fixedIdr: number };
 export function feePolicyFromEnv(env: NodeJS.ProcessEnv = process.env): FeePolicy {
   const rate = env.MIDTRANS_FEE_BPS;
   const fixed = env.MIDTRANS_FEE_FIXED_IDR;
-  if (rate === undefined || fixed === undefined) {
+  if (rate === undefined || fixed === undefined || !rate.trim() || !fixed.trim()) {
     throw new Error('Set MIDTRANS_FEE_BPS and MIDTRANS_FEE_FIXED_IDR from your merchant tariff');
   }
   const basisPoints = Number(rate);

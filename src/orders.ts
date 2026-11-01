@@ -13,10 +13,12 @@ export function midtransFromEnv(env: NodeJS.ProcessEnv = process.env) {
   if (!env.MIDTRANS_SERVER_KEY) throw new Error('MIDTRANS_SERVER_KEY is required');
   const mode = env.MIDTRANS_ENV ?? 'sandbox';
   if (mode !== 'sandbox' && mode !== 'production') throw new Error('Invalid MIDTRANS_ENV');
+  if (mode === 'production' && env.MIDTRANS_PRODUCTION_APPROVED !== 'true') throw new Error('Production payment activation requires approval');
   return new MidtransClient(env.MIDTRANS_SERVER_KEY, mode);
 }
 
-export async function createOrder(pool: Pool, phone: string, variantId: string, midtrans: MidtransClient) {
+export async function createOrder(pool: Pool, phone: string, variantId: string, midtrans: MidtransClient,
+  options: { email?: string; expectedTotal?: number } = {}) {
   if (!/^[1-9][0-9]{7,14}$/.test(phone) || !/^\d+$/.test(variantId)) throw new Error('Invalid customer or variant');
   const policy = feePolicyFromEnv();
   const client = await pool.connect();
@@ -33,8 +35,11 @@ export async function createOrder(pool: Pool, phone: string, variantId: string, 
     `, [variantId]);
     const selected = variant.rows[0];
     if (!selected) throw new Error('Variant is not active');
+    if (selected.stock_status === 'out') throw new Error('Variant is out of stock');
+    if (selected.requires_email && !validEmail(options.email)) throw new Error('Valid email is required');
     const quote = calculateQuote(Number(selected.base_price_idr), policy);
     totalIdr = quote.total_idr;
+    if (options.expectedTotal !== undefined && options.expectedTotal !== totalIdr) throw new Error('Price changed; confirm a new quote');
     stockStatus = selected.stock_status;
     const customer = await client.query<{ id: string }>(`
       INSERT INTO customers(wa_number) VALUES ($1)
@@ -46,9 +51,9 @@ export async function createOrder(pool: Pool, phone: string, variantId: string, 
       SELECT o.public_id,o.status,o.total_idr,p.qr_code_url
       FROM orders o LEFT JOIN payments p ON p.order_id=o.id
       WHERE o.customer_id=$1 AND o.variant_id=$2
-        AND o.status IN ('awaiting_stock','payment_setup','awaiting_payment')
+        AND o.status IN ('awaiting_stock','payment_setup','awaiting_payment') AND o.payment_environment=$3
       ORDER BY o.created_at DESC LIMIT 1 FOR UPDATE OF o
-    `,[customer.rows[0].id,selected.id]);
+    `,[customer.rows[0].id,selected.id,process.env.MIDTRANS_ENV ?? 'sandbox']);
     if(existing.rows[0]) {
       const order=existing.rows[0];
       await client.query('COMMIT');
@@ -61,11 +66,13 @@ export async function createOrder(pool: Pool, phone: string, variantId: string, 
     publicId = 'ORD-' + randomBytes(8).toString('hex').toUpperCase();
     await client.query(`
       INSERT INTO orders(public_id, customer_id, variant_id, product_name_snapshot,
-        variant_name_snapshot, terms_snapshot, base_price_idr, payment_fee_idr, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        variant_name_snapshot, terms_snapshot, base_price_idr, payment_fee_idr, status,
+        fulfillment_email, warranty_days_snapshot, requires_email_snapshot, payment_environment)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     `, [publicId, customer.rows[0].id, selected.id, selected.product_name,
       selected.name, selected.terms, quote.base_price_idr, quote.payment_fee_idr,
-      stockStatus === 'out' ? 'awaiting_stock' : 'payment_setup']);
+      'payment_setup', selected.requires_email ? options.email!.trim() : null,
+      selected.warranty_days, selected.requires_email, process.env.MIDTRANS_ENV ?? 'sandbox']);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -108,11 +115,12 @@ export async function handlePaymentNotice(
     await client.query('BEGIN');
     const result = await client.query<{
       id: string; status: string; total_idr: string; phone: string;
-      variant_name_snapshot: string;
+      variant_name_snapshot: string; product_name_snapshot: string; fulfillment_email: string | null;
       requires_email: boolean;
     }>(`
       SELECT o.id, o.status, o.total_idr, c.wa_number AS phone,
-        o.variant_name_snapshot, v.requires_email
+        o.variant_name_snapshot, o.product_name_snapshot, o.fulfillment_email,
+        o.requires_email_snapshot AS requires_email
       FROM orders o JOIN customers c ON c.id = o.customer_id
       JOIN variants v ON v.id=o.variant_id
       WHERE o.public_id = $1 FOR UPDATE OF o
@@ -124,26 +132,37 @@ export async function handlePaymentNotice(
     const payment = await client.query<{ id: string; provider_transaction_id: string }>(`
       SELECT id, provider_transaction_id FROM payments WHERE order_id = $1 FOR UPDATE
     `, [order.id]);
+    if (!payment.rows[0] && order.status === 'payment_setup' && authoritative.transaction_id) {
+      await client.query(`INSERT INTO payments(order_id,provider_transaction_id,status,amount_idr)
+        VALUES($1,$2,'pending',$3) ON CONFLICT DO NOTHING`, [order.id,authoritative.transaction_id,order.total_idr]);
+      const recovered = await client.query<{id:string;provider_transaction_id:string}>(
+        'SELECT id, provider_transaction_id FROM payments WHERE order_id=$1 FOR UPDATE',[order.id]);
+      payment.rows = recovered.rows;
+    }
     if (!payment.rows[0] || payment.rows[0].provider_transaction_id !== authoritative.transaction_id) {
       throw new Error('Unknown transaction');
     }
-    if (state === 'paid' && ['awaiting_payment', 'expired'].includes(order.status)) {
+    if (state === 'paid' && ['payment_setup','awaiting_payment', 'expired','cancelled','payment_failed'].includes(order.status)) {
       await client.query(`
         UPDATE payments SET status = 'settlement', settled_at = now() WHERE id = $1
       `, [payment.rows[0].id]);
       await client.query(`
-        UPDATE orders SET status = 'awaiting_customer_data', paid_at = now()
+        UPDATE orders SET status = $2, paid_at = now()
         WHERE id = $1
-      `, [order.id]);
-      if(order.requires_email) await enqueue(client, order.phone, 'request_email', {
+      `, [order.id, order.requires_email && !order.fulfillment_email ? 'awaiting_customer_data' : 'processing']);
+      if(order.requires_email && !order.fulfillment_email) await enqueue(client, order.phone, 'request_email', {
         order_id: notice.order_id, text: 'Pembayaran berhasil. Kirim Gmail Anda untuk diproses admin.',
       });
-      await enqueueAdmins(client, 'order_paid', { order_id: notice.order_id, phone: order.phone, variant: order.variant_name_snapshot });
-    } else if (state === 'expired' && order.status === 'awaiting_payment') {
-      await client.query(`UPDATE payments SET status = 'expire' WHERE id = $1`, [payment.rows[0].id]);
-      await client.query(`UPDATE orders SET status = 'expired' WHERE id = $1`, [order.id]);
-      await enqueue(client, order.phone, 'order_expired', {
-        order_id: notice.order_id, text: 'QRIS kedaluwarsa. Pesanan dibatalkan. Silakan buat pesanan baru.',
+      await enqueue(client, order.phone, 'text', {text:`Pembayaran ${notice.order_id} terverifikasi lunas. Produk akan dikirim manual oleh admin.`});
+      await enqueueAdmins(client, 'order_paid', { order_id: notice.order_id, phone: order.phone,
+        product: order.product_name_snapshot, variant: order.variant_name_snapshot, email: order.fulfillment_email });
+      await client.query(`INSERT INTO order_events(order_id,event_type,actor_type) VALUES($1,'payment_settled','midtrans')`,[order.id]);
+    } else if (['expired','cancelled','failed'].includes(state) && ['payment_setup','awaiting_payment'].includes(order.status)) {
+      await client.query(`UPDATE payments SET status = $2 WHERE id = $1`, [payment.rows[0].id,
+        state==='expired'?'expire':state==='cancelled'?'cancel':'deny']);
+      await client.query(`UPDATE orders SET status = $2 WHERE id = $1`, [order.id,state==='failed'?'payment_failed':state]);
+      await enqueue(client, order.phone, 'text', {
+        text: `Pembayaran pesanan ${notice.order_id}: ${state==='expired'?'kedaluwarsa':state==='cancelled'?'dibatalkan':'gagal'}. Pesanan ini belum lunas.`,
       });
     }
     await client.query('COMMIT');
@@ -156,11 +175,15 @@ export async function handlePaymentNotice(
   }
 }
 
-async function enqueue(client: PoolClient, phone: string, type: string, payload: unknown) {
+export async function enqueue(client: PoolClient, phone: string, type: string, payload: unknown) {
   await client.query(
     'INSERT INTO message_outbox(recipient_wa_number, message_type, payload) VALUES ($1,$2,$3)',
     [phone, type, JSON.stringify(payload)],
   );
+}
+
+export function validEmail(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 async function enqueueAdmins(client: PoolClient, type: string, payload: unknown) {

@@ -83,7 +83,7 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(Number(process.env.PORT ?? 3000), () => {
+server.listen(Number(process.env.PORT ?? 3000), process.env.HOST ?? '127.0.0.1', () => {
   console.log('Digimart health server listening');
 });
 

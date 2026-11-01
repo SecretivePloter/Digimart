@@ -1,15 +1,13 @@
 import makeWASocket, { DisconnectReason, normalizeMessageContent, useMultiFileAuthState } from '@whiskeysockets/baileys';
-import { adminMessage } from './admin-wa.js';
+import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import type { Pool } from 'pg';
 import { database } from './services.js';
-import { listCatalog, productDetail } from './catalog.js';
-import { formatCatalog, formatProduct } from './wa-format.js';
-import { createOrder, midtransFromEnv } from './orders.js';
-import { feePolicyFromEnv } from './quote.js';
+import { buyerMessage } from './buyer-chat.js';
+import { reconcilePayments } from './order-operations.js';
 
 const pool = database();
-const sessions = new Map<string, { product: Awaited<ReturnType<typeof productDetail>>; variantId?: string; ordering?: boolean }>();
+const queues = new Map<string, Promise<void>>();
 let stopped = false;
 
 function bodyText(message: {
@@ -19,112 +17,21 @@ function bodyText(message: {
   return (message.conversation ?? message.extendedTextMessage?.text ?? '').trim();
 }
 
-async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, sessionId: string, text: string) {
-  if (!text) return;
-  const adminReply=await adminMessage(pool,sessionId,text);
-  if (adminReply!==null) { await sock.sendMessage(jid,{text:adminReply}); return; }
-  const lower = text.toLowerCase().trim();
-  if (lower === 'list') {
-    await sock.sendMessage(jid, { text: formatCatalog(await listCatalog(pool)) });
-    return;
-  }
-  const session = sessions.get(sessionId);
-  if (/^\d+$/.test(lower) && session?.product) {
-    const selected = session.product.variants[Number(lower) - 1];
-    if (selected) {
-      session.variantId = selected.id;
-      await sock.sendMessage(jid, {
-        text: `Pilihan: *${session.product.name} — ${selected.name}*.\nKetik *konfirmasi beli* untuk melanjutkan.`,
-      });
-      return;
-    }
-  }
-  if (lower === 'konfirmasi' || lower === 'konfirmasi beli' || lower === 'payment') {
-    if (!session?.variantId || !session.product) {
-      await sock.sendMessage(jid, { text: 'Pilih produk dan nomor variannya dahulu, lalu ketik *konfirmasi beli*.' });
-      return;
-    }
-    if (session.ordering) { await sock.sendMessage(jid,{text:'Pesanan sedang diproses. Tunggu sebentar.'}); return; }
-    const variant=session.product.variants.find(v=>v.id===session.variantId);
-    if (!variant || variant.stock_status==='out') {
-      await sock.sendMessage(jid,{text:'Stok varian ini habis. Hubungi admin untuk memastikan ketersediaan sebelum memesan.'}); return;
-    }
-    session.ordering=true;
-    try {
-      // Do not create an order/charge unless all merchant-specific sandbox settings exist.
-      feePolicyFromEnv();
-      if ((process.env.MIDTRANS_ENV ?? 'sandbox')!=='sandbox') {
-        throw new Error('WhatsApp checkout is sandbox-only until production verification is complete.');
-      }
-      const order=await createOrder(pool,sessionId,variant.id,midtransFromEnv());
-      if (order.status==='awaiting_stock') {
-        await sock.sendMessage(jid,{text:`Pesanan *${order.publicId}* menunggu konfirmasi stok admin. QRIS belum dibuat.`});
-      } else if (order.status==='payment_setup') {
-        await sock.sendMessage(jid,{text:`Pesanan *${order.publicId}* sedang diperiksa status pembayarannya. Jangan membuat pesanan baru untuk varian ini; hubungi admin.`});
-      } else if (order.status==='awaiting_payment' && order.qrUrl) {
-        await sock.sendMessage(jid,{text:`*QRIS pesanan Digimart*\nID: *${order.publicId}*\nProduk: ${session.product.name}\nVarian: ${variant.name}\nTotal: *Rp${order.totalIdr.toLocaleString('id-ID')}*\nBerlaku 15 menit. Selesaikan pembayaran melalui QRIS ini:\n${order.qrUrl}\n\nJika waktu habis, buat pesanan baru.`});
-      }
-    } catch(error) {
-      console.error('Pembuatan pesanan sandbox gagal:',error);
-      const message=error instanceof Error?error.message:'';
-      const text=message.includes('MIDTRANS_SERVER_KEY')
-        ? 'Pembayaran belum siap: MIDTRANS_SERVER_KEY belum diatur di .env.local.'
-        : message.includes('MIDTRANS_FEE_')
-          ? 'Pembayaran belum siap: isi MIDTRANS_FEE_BPS dan MIDTRANS_FEE_FIXED_IDR sesuai tarif akun merchant.'
-          : message.includes('sandbox-only')
-            ? 'Pembayaran WhatsApp sementara hanya dibuka untuk Midtrans sandbox.'
-            : 'Pesanan belum dapat dibuat. Periksa konfigurasi Midtrans sandbox atau hubungi admin.';
-      await sock.sendMessage(jid,{text});
-    } finally { session.ordering=false; }
-    return;
-  }
-  const namedSelection = lower.match(/^(?:beli|konfirmasi beli)\s+(.+)$/);
-  if (namedSelection) {
-    const selector = namedSelection[1].trim();
-    const listing = await listCatalog(pool);
-    const row = listing.find(item => item.name.toLowerCase() === selector ||
-      item.slug.toLowerCase() === selector || String(item.catalog_number) === selector);
-    const named = await productDetail(pool, row?.slug ?? selector);
-    if (named) {
-      if (lower.startsWith('konfirmasi beli ') && session?.variantId &&
-          session.product?.slug === named.slug) {
-        await sock.sendMessage(jid, { text: 'Varian sudah dipilih. Pembayaran WhatsApp belum diaktifkan; admin sedang menyiapkan koneksi Midtrans.' });
-        return;
-      }
-      sessions.set(sessionId, { product: named });
-      await sock.sendMessage(jid, { text: formatProduct(named) });
-      return;
-    }
-    await sock.sendMessage(jid, { text: 'Produk tidak ditemukan. Ketik *list* untuk melihat katalog.' });
-    return;
-  }
-  if (lower === 'beli') {
-    await sock.sendMessage(jid, { text: 'Ketik *beli nama produk* untuk melihat detail produk.' });
-    return;
-  }
-  const listing = await listCatalog(pool);
-  const selectedRow = listing.find(row => row.name.toLowerCase() === lower);
-  const product = await productDetail(pool, selectedRow?.slug ?? lower);
-  if (product) {
-    sessions.set(sessionId, { product });
-    await sock.sendMessage(jid, { text: formatProduct(product) });
-    return;
-  }
-  await sock.sendMessage(jid, { text: 'Produk tidak ditemukan. Ketik *list* untuk melihat katalog.' });
-}
-
 function outboxText(type: string, payload: Record<string, unknown>) {
-  if (type === 'request_email') return `Pembayaran *${payload.order_id}* berhasil. Kirim Gmail Anda untuk diproses admin.`;
+  if (type === 'text') return String(payload.text);
+  if (type === 'request_email') return `Pembayaran *${payload.order_id}* berhasil. Ketik email ${payload.order_id} alamat@email.com untuk diproses admin.`;
   if (type === 'order_expired') return `QRIS pesanan *${payload.order_id}* kedaluwarsa. Pesanan dibatalkan.`;
-  if (type === 'order_paid') return `🔔 Pesanan *${payload.order_id}* lunas.\nVarian: ${payload.variant}\nPelanggan: +${payload.phone}\nSegera proses pesanan.`;
+  if (type === 'order_paid') return `🔔 Pesanan *${payload.order_id}* lunas.\nProduk: ${payload.product}\nVarian: ${payload.variant}\nEmail: ${payload.email ?? "tidak diperlukan / belum tersedia"}\nPelanggan: +${payload.phone}\nSegera proses pesanan.`;
   return null;
 }
 
 async function drainOutbox(sock: ReturnType<typeof makeWASocket>, pool: Pool) {
+  await pool.query(`UPDATE message_outbox SET status='failed'
+    WHERE status='sending' AND claimed_at < now()-interval '5 minutes'`);
   const result = await pool.query<{
     id: string; recipient_wa_number: string; message_type: string; payload: Record<string, unknown>;
   }>(`
-    UPDATE message_outbox SET status = 'sending', attempts = attempts + 1
+    UPDATE message_outbox SET status = 'sending', claimed_at=now(), attempts = attempts + 1
     WHERE id IN (
       SELECT id FROM message_outbox
       WHERE status IN ('pending', 'failed') AND next_attempt_at <= now() AND attempts < 5
@@ -134,6 +41,12 @@ async function drainOutbox(sock: ReturnType<typeof makeWASocket>, pool: Pool) {
   `);
   for (const row of result.rows) {
     try {
+      if ((process.env.MIDTRANS_ENV ?? 'sandbox') === 'sandbox' &&
+          !(process.env.WA_TEST_NUMBERS ?? '').split(',').map(s=>s.trim()).includes(row.recipient_wa_number)) {
+        await pool.query(`UPDATE message_outbox SET status='pending',attempts=attempts-1,
+          next_attempt_at=now()+interval '5 minutes' WHERE id=$1`,[row.id]);
+        continue;
+      }
       const text = outboxText(row.message_type, row.payload);
       if (!text) throw new Error('Unsupported message type');
       await sock.sendMessage(`${row.recipient_wa_number}@s.whatsapp.net`, { text });
@@ -149,14 +62,16 @@ async function drainOutbox(sock: ReturnType<typeof makeWASocket>, pool: Pool) {
 }
 
 async function connect() {
-  const { state, saveCreds } = await useMultiFileAuthState('.wa-auth');
-  const sock = makeWASocket({ auth: state, printQRInTerminal: false });
+  const { state, saveCreds } = await useMultiFileAuthState(process.env.WA_AUTH_DIR ?? '.wa-auth');
+  const sock = makeWASocket({ auth: state, printQRInTerminal: false, logger: pino({level:'silent'}) });
   let connected = false;
-  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', () => {void saveCreds().catch(()=>{
+    console.error('WhatsApp session could not be persisted');process.exit(1);
+  });});
   sock.ev.on('connection.update', ({ connection, qr, lastDisconnect }) => {
     if (qr) {
-      console.log('Pindai QR melalui WhatsApp → Perangkat tertaut → Tautkan perangkat:');
-      qrcode.generate(qr, { small: true });
+      if (process.env.WA_PAIRING_MODE === 'true') qrcode.generate(qr, { small: true });
+      else console.error('WhatsApp pairing required; run private pairing mode in a terminal.');
     }
     if (connection === 'open') {
       connected = true;
@@ -168,7 +83,7 @@ async function connect() {
       if (code === DisconnectReason.loggedOut) {
         console.error('Sesi WhatsApp keluar. Periksa perangkat tertaut sebelum menyambungkan ulang.');
       } else {
-        setTimeout(() => void connect().catch(console.error), 5000);
+        setTimeout(() => void connect().catch(()=>process.exit(1)), 5000);
       }
     }
   });
@@ -188,18 +103,40 @@ async function connect() {
       const content = normalizeMessageContent(message.message);
       const body = content && bodyText(content);
       console.log(`Pesan masuk: ${jid.endsWith('@lid') ? 'LID' : 'nomor'}, teks: ${body ? 'ya' : 'tidak'}`);
-      if (body) void incoming(sock, jid, sessionId, body).catch(console.error);
+      if (body && message.key.id) {
+        const allowed=(process.env.WA_TEST_NUMBERS ?? '').split(',').map(s=>s.trim());
+        if ((process.env.MIDTRANS_ENV ?? 'sandbox')==='sandbox' && !allowed.includes(sessionId)) continue;
+        const id=message.key.id;
+        const task=(queues.get(sessionId) ?? Promise.resolve()).then(async()=>{
+          if((await pool.query('SELECT 1 FROM incoming_messages WHERE sender=$1 AND message_id=$2',[sessionId,id])).rowCount) return;
+          try {
+            const reply=await buyerMessage(pool,sessionId,body);
+            await sock.sendMessage(jid,{text:reply});
+            await pool.query('INSERT INTO incoming_messages(sender,message_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[sessionId,id]);
+          } catch {
+            console.error('Incoming message processing failed; no secrets logged.');
+            await sock.sendMessage(jid,{text:'Permintaan belum dapat diproses. Cek status pesanan atau hubungi admin sebelum mengulang pembayaran.'});
+          }
+        }).catch(()=>console.error('Message transport unavailable'));
+        queues.set(sessionId,task);
+        void task.finally(()=>{if(queues.get(sessionId)===task) queues.delete(sessionId);});
+      }
     }
   });
+  let draining=false;
   const timer = setInterval(() => {
-    if (connected) void drainOutbox(sock, pool).catch(console.error);
+    if (connected && !draining) { draining=true; void drainOutbox(sock,pool)
+      .catch(()=>console.error('Outbox temporarily unavailable')).finally(()=>{draining=false;}); }
   }, 3000);
   sock.ev.on('connection.update', ({ connection }) => {
     if (connection === 'close') clearInterval(timer);
   });
 }
 
-process.on('SIGINT', () => { stopped = true; void pool.end().then(() => process.exit(0)); });
+for(const signal of ['SIGINT','SIGTERM']) process.on(signal, () => { stopped = true; void pool.end().then(() => process.exit(0)); });
 void pool.query(`UPDATE message_outbox SET status = 'failed' WHERE status = 'sending'`)
   .then(() => connect())
-  .catch(error => { console.error(error); process.exitCode = 1; });
+  .catch(() => { console.error('Startup failed; check private configuration and database connectivity.'); process.exit(1); });
+
+let reconciling=false;
+setInterval(()=>{if(reconciling || stopped) return; reconciling=true; void reconcilePayments(pool).catch(()=>console.error('Payment reconciliation unavailable')).finally(()=>{reconciling=false;});},30000);
