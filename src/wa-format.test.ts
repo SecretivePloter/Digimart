@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { formatCatalog, formatProduct } from './wa-format.js';
+import { catalogCopy, priceChanges } from './catalog-copy.js';
 
 test('catalog and variant messages show prices and stock without internal warranty duration', () => {
   const list = formatCatalog([{ catalog_number: 1, name: 'YOUTUBE', stock_status: 'ready' }]);
@@ -11,4 +12,18 @@ test('catalog and variant messages show prices and stock without internal warran
   });
   assert.match(detail, /Rp12\.000 🟡/);
   assert.match(detail, /Garansi 1 bulan/);
+});
+
+test('product reply keeps one compact section and current variant prices', () => {
+  const detail = formatProduct({
+    name: 'YouTube', description: catalogCopy.youtube.map(x => '- ' + x).join('\n'), terms: '',
+    variants: [
+      { name: '1 Bulan via Invite', base_price_idr: '9000', stock_status: 'ready', warranty_label: '' },
+      { name: 'Family head gmail buyer', base_price_idr: String(priceChanges.youtube['Family head gmail buyer']), stock_status: 'ready', warranty_label: '' },
+    ],
+  });
+  assert.match(detail, /1 Bulan via Invite — Rp9\.000/);
+  assert.match(detail, /Family head gmail buyer — Rp19\.000/);
+  assert.equal((detail.match(/\*Keterangan:\*/g) ?? []).length, 1);
+  assert.doesNotMatch(detail, /YANG KAMU DAPAT|Klik Beli/);
 });
