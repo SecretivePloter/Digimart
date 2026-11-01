@@ -11,11 +11,11 @@ export function formatProduct(product: {
   variants: Array<{ name: string; base_price_idr: string; stock_status: string; warranty_label: string }>;
 }) {
   const icon: Record<string, string> = { ready: '🟢', limited: '🟡', out: '🔴' };
-  return [`*${product.name}*`, product.description,
-    '', '*Pilihan varian:*',
+  return [`*${product.name.toUpperCase()}*`, '', '*Pilihan varian:*',
     ...product.variants.map((v, i) =>
       `${i + 1}. ${v.name} — Rp${Number(v.base_price_idr).toLocaleString('id-ID')} ${icon[v.stock_status] ?? '🔴'}`
     ),
-    '', product.terms, '',
+    '', ...(product.description.trim() ? ['*Keterangan:*', product.description.trim()] : []),
+    ...(product.terms.trim() ? ['', product.terms.trim()] : []), '',
     'Balas nomor varian yang Anda pilih.'].filter(Boolean).join('\n');
 }
