@@ -2,6 +2,9 @@
 
 Aktif pada 3 November 2026. Provider `qris_manual`, `PAYMENTS_ENABLED=true`.
 Release pembayaran: `/opt/lidealabs/releases/20261103-qris-manual`, symlink `/opt/lidealabs/current`.
+Setelah integrasi downloader, symlink aktif menunjuk `/opt/lidealabs/releases/20261103-qris-downloader`.
+QRIS manual tetap aktif. Checkout nyata teramati menghasilkan satu order pending tanpa paid_at;
+tidak ada pelunasan produksi yang dilakukan agen.
 Merchant: **MUGENWORKLABS, PULSA & INTERNET**. Gambar asli dari `private/qris-gopay.png`
 disalin tanpa modifikasi ke `/var/lib/lidealabs/private/qris-gopay.png`, owner lidealabs, mode 0600.
 SHA256: `8b2b7c00b464d5accd78713b34452bb49995b12695ef252fb2397180b74b291e`.
@@ -64,6 +67,11 @@ dapat dikirim ulang jika proses berhenti setelah pengiriman tetapi sebelum penca
 Backup privat `/var/backups/lidealabs/qris-20261103`: `before.dump`, `cutover.dump`,
 konfigurasi sebelum perubahan, arsip konfigurasi/sesi, checksum dan salinan terenkripsi age.
 Release sebelumnya `/opt/lidealabs/releases/20261103-localpg` dipertahankan.
+Backup harian juga mengarsipkan gambar QR dan bukti di `private` serta `manual-evidence`
+menjadi `database-TIMESTAMP.assets.tar.gz`, dengan salinan terenkripsi `.age`.
+Restore bukti harus menyertai restore dump agar path bukti tetap dapat dibaca admin.
+Script offsite Windows mengambil dump dan arsip aset terenkripsi; upload cloud otomatis
+tetap bergantung pada Windows dan sinkronisasi Drive desktop, bukan jaminan upload selesai.
 Script `deploy/activate-manual-qris.sh` adalah catatan cutover sekali pakai, bukan perintah update rutin.
 
 Jika gagal, hentikan kedua service, backup kondisi terbaru, pulihkan `app.env.before`,

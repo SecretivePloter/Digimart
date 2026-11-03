@@ -71,7 +71,7 @@ export async function buyerMessage(pool: Pool, phone: string, text: string): Pro
   const listing=await listCatalog(pool);
   const match=listing.find(p=>p.name.toLowerCase()===selector || p.slug===selector || String(p.catalog_number)===selector);
   const chosen=match?await productDetail(pool,match.slug):null;
-  if(!chosen) return 'Ketik list untuk katalog, status ORD-... untuk pesanan, atau batal untuk memilih ulang.';
+  if(!chosen) return 'Ketik list untuk katalog, status ORD-... untuk pesanan, batal untuk memilih ulang, atau /dl LINK untuk unduh video.';
   await pool.query(`INSERT INTO conversation_states(customer_id,selected_product_id,step)
     SELECT $1,id,'variant' FROM products WHERE slug=$2
     ON CONFLICT(customer_id) DO UPDATE SET selected_product_id=excluded.selected_product_id,

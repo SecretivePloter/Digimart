@@ -8,6 +8,7 @@ import { buyerMessage } from './buyer-chat.js';
 import { reconcilePayments } from './order-operations.js';
 import { manualPaymentsActive, qrisPath, sandboxMessaging, verifyManualConfig } from './payment-config.js';
 import { submitManualEvidence } from './manual-payments.js';
+import { downloadCommand, downloaderHelp, withDownloadedVideo } from './downloader.js';
 
 const pool = database();
 const queues = new Map<string, Promise<void>>();
@@ -121,7 +122,18 @@ async function connect() {
         const task=(queues.get(sessionId) ?? Promise.resolve()).then(async()=>{
           if((await pool.query('SELECT 1 FROM incoming_messages WHERE sender=$1 AND message_id=$2',[sessionId,id])).rowCount) return;
           try {
-            if(media) {
+            const download=downloadCommand(body??'');
+            if(download!==null&&!media) {
+              if(process.env.DOWNLOADER_ENABLED!=='true')await sock.sendMessage(jid,{text:'Downloader belum aktif.'});
+              else if(!download)await sock.sendMessage(jid,{text:downloaderHelp});
+              else {
+                try {
+                  await withDownloadedVideo(sessionId,download,async path=>{
+                    await sock.sendMessage(jid,{document:{url:path},mimetype:'video/mp4',fileName:'video.mp4',caption:'Unduhan selesai.'});
+                  });
+                } catch(e) {await sock.sendMessage(jid,{text:e instanceof Error?e.message:'Unduhan gagal. Coba lagi nanti.'});}
+              }
+            } else if(media) {
               const match=body?.trim().match(/^bukti\s+(ORD-[A-F0-9]{16})$/i);
               if(!match) { await sock.sendMessage(jid,{text:'Kirim ulang foto/PDF bukti dengan caption: bukti ORD-... sesuai ID pesanan.'}); return; }
               if(Number(media.fileLength??0)>5*1024*1024) {await sock.sendMessage(jid,{text:'Bukti maksimal 5 MB.'});return;}
