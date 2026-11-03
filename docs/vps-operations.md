@@ -1,5 +1,10 @@
 # LIDEALABS: deployment dan operasional
 
+Status terbaru: [QRIS manual aktif dan perintah admin](manual-qris.md). Ketentuan Midtrans
+dan status pembayaran nonaktif dalam catatan lama di bawah tidak berlaku untuk checkout manual.
+
+Pembaruan 3 November 2026: lihat [hasil migrasi dan runbook aktual](migration-local-postgres-20261103.md). Status 1 November di bawah adalah catatan historis.
+
 Status 1 November 2026: implementasi lokal dan pengujian SQL terisolasi telah dikerjakan. VPS, sandbox Midtrans nyata, pengiriman WhatsApp, HTTPS, reboot, dan pemulihan gangguan belum diverifikasi. Produksi belum diaktifkan. Dokumen ini adalah prosedur penerapan, bukan bukti penerapan.
 
 ## Sumber dan konfigurasi

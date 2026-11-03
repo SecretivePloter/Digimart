@@ -1,0 +1,77 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PGlite } from '@electric-sql/pglite';
+import type { Pool } from 'pg';
+import { buyerMessage } from './buyer-chat.js';
+import { adminMessage } from './admin-wa.js';
+import { startManualOrder, submitManualEvidence, reviewManualPayment } from './manual-payments.js';
+import { completeOrder, orderStatus, salesReport } from './order-operations.js';
+
+test('manual QRIS: migration, buyer checkout without Midtrans, evidence ownership, admin verification, deduplication and fulfillment',async()=>{
+  const db=new PGlite();
+  const adapter={query:async(sql:string,params?:any[])=>{const r=await db.query(sql,params);return {...r,rowCount:r.rows.length||r.affectedRows||0};},release(){}};
+  const pool={...adapter,connect:async()=>adapter} as unknown as Pool;
+  const dir=await mkdtemp(join(tmpdir(),'lidealabs-qris-test-'));
+  process.env.PAYMENT_PROVIDER='qris_manual';process.env.PAYMENTS_ENABLED='true';
+  process.env.MANUAL_PAYMENT_EVIDENCE_DIR=dir;
+  // Transport asset is tested separately on deployment; no production asset is required by fixtures.
+  process.env.MANUAL_QRIS_IMAGE='package.json';
+  delete process.env.MIDTRANS_SERVER_KEY;delete process.env.MIDTRANS_FEE_BPS;delete process.env.MIDTRANS_FEE_FIXED_IDR;
+  const buyer='628111111111',admin='628222222222',stranger='628333333333';
+  const media=(label:string)=>({data:Buffer.from(label),mime:'image/png'});
+  try {
+    for(const name of (await readdir('migrations')).filter(n=>n.endsWith('.sql')&&!n.startsWith('006')).sort())await db.exec(await readFile('migrations/'+name,'utf8'));
+    await db.exec(`INSERT INTO admins(wa_number,name) VALUES('${admin}','TEST ADMIN');
+      INSERT INTO products(catalog_number,slug,name,description) VALUES(1,'test','TEST','Keep this description');
+      INSERT INTO variants(product_id,name,base_price_idr,requires_email,stock_status) VALUES(1,'Email',10000,true,'ready'),(1,'Plain',5000,false,'ready'),(1,'Out',5000,false,'out');
+      INSERT INTO customers(wa_number) VALUES('${buyer}');
+      INSERT INTO orders(public_id,customer_id,variant_id,product_name_snapshot,variant_name_snapshot,terms_snapshot,base_price_idr,status,paid_at)
+      VALUES('legacy-unpaid',1,2,'TEST','Plain','',5000,'processing',NULL),('legacy-paid',1,2,'TEST','Plain','',5000,'processing',now());`);
+    await db.exec(await readFile('migrations/006_manual_qris.sql','utf8'));
+    assert.equal((await pool.query("SELECT payment_status FROM orders WHERE public_id='legacy-unpaid'")).rows[0].payment_status,'review_required');
+    assert.equal((await pool.query("SELECT payment_status FROM orders WHERE public_id='legacy-paid'")).rows[0].payment_status,'paid');
+    await buyerMessage(pool,buyer,'list');await buyerMessage(pool,buyer,'1');
+    assert.match(await buyerMessage(pool,buyer,'1'),/Total: Rp10.000/);
+    await buyerMessage(pool,buyer,'test@example.com');
+    const reply=await buyerMessage(pool,buyer,'konfirmasi beli');
+    assert.match(reply,/QRIS manual/);assert.match(reply,/MUGENWORKLABS/);
+    const id=reply.match(/ORD-[A-F0-9]{16}/)![0];
+    assert.match(await buyerMessage(pool,buyer,'konfirmasi beli'),new RegExp(id));
+    const o=(await pool.query('SELECT * FROM orders WHERE public_id=$1',[id])).rows[0];
+    assert.equal(o.payment_environment,'qris_manual');assert.equal(Number(o.payment_fee_idr),0);assert.equal(o.fulfillment_email,'test@example.com');
+    await assert.rejects(startManualOrder(pool,buyer,'1',{expectedTotal:1,email:'test@example.com'}),/Harga berubah/);
+    await assert.rejects(startManualOrder(pool,buyer,'1'),/Email/);
+    await assert.rejects(startManualOrder(pool,buyer,'3'),/tidak tersedia/);
+    await assert.rejects(submitManualEvidence(pool,stranger,id,media('proof-one')),/tidak ditemukan/);
+    await assert.rejects(reviewManualPayment(pool,admin,id,'approve','','TX-0001'),/tidak ditemukan/);
+    await submitManualEvidence(pool,buyer,id,media('proof-one'));
+    assert.equal((await orderStatus(pool,buyer,id)).payment_status,'awaiting_verification');
+    assert.equal((await pool.query('SELECT paid_at FROM orders WHERE public_id=$1',[id])).rows[0].paid_at,null);
+    await assert.rejects(completeOrder(pool,admin,id),/belum siap/);
+    assert.match((await adminMessage(pool,stranger,`/admin setujui ${id} | TX-0001`))!,/tidak tersedia/);
+    await assert.rejects(reviewManualPayment(pool,stranger,id,'approve','','TX-0001'),/ditolak/);
+    assert.match((await adminMessage(pool,admin,'/admin pembayaran'))!,new RegExp(id));
+    assert.match((await adminMessage(pool,admin,`/admin bukti ${id}`))!,/diantrekan/);
+    await reviewManualPayment(pool,admin,id,'reject','Nominal perlu diperiksa','');
+    await submitManualEvidence(pool,buyer,id,media('proof-one'));
+    assert.match((await adminMessage(pool,admin,`/admin setujui ${id} | TX-0001`))!,/disetujui/);
+    const count=(await pool.query('SELECT count(*)::int n FROM message_outbox')).rows[0].n;
+    await reviewManualPayment(pool,admin,id,'approve','','TX-0001');
+    assert.equal((await pool.query('SELECT count(*)::int n FROM message_outbox')).rows[0].n,count);
+    await assert.rejects(submitManualEvidence(pool,buyer,id,media('replacement')),/tidak ditemukan/);
+    const second=await startManualOrder(pool,stranger,'2');
+    await submitManualEvidence(pool,stranger,second.id,media('proof-two'));
+    await assert.rejects(reviewManualPayment(pool,admin,second.id,'approve','',' tx-0001 '),/sudah dipakai/);
+    await submitManualEvidence(pool,stranger,second.id,media('proof-one'));
+    await assert.rejects(reviewManualPayment(pool,admin,second.id,'approve','','TX-0002'),/sudah dipakai/);
+    assert.equal((await orderStatus(pool,stranger,second.id)).payment_status,'awaiting_verification');
+    assert.match((await adminMessage(pool,admin,'/admin antrean'))!,new RegExp(id));
+    assert.equal(await completeOrder(pool,admin,id),true);assert.equal(await completeOrder(pool,admin,id),false);
+    assert.equal((await pool.query('SELECT fulfillment_status FROM orders WHERE public_id=$1',[id])).rows[0].fulfillment_status,'completed');
+    assert.equal((await salesReport(pool,admin)).find(r=>r.payment_environment==='qris_manual').paid_orders,1);
+    assert.equal((await pool.query('SELECT description FROM products')).rows[0].description,'Keep this description');
+  } finally {await db.close();await rm(dir,{recursive:true,force:true});}
+});

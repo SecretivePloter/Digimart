@@ -1,10 +1,13 @@
-import makeWASocket, { DisconnectReason, normalizeMessageContent, useMultiFileAuthState } from '@whiskeysockets/baileys';
+import makeWASocket, { DisconnectReason, downloadMediaMessage, normalizeMessageContent, useMultiFileAuthState } from '@whiskeysockets/baileys';
+import { readFile } from 'node:fs/promises';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import type { Pool } from 'pg';
 import { database } from './services.js';
 import { buyerMessage } from './buyer-chat.js';
 import { reconcilePayments } from './order-operations.js';
+import { manualPaymentsActive, qrisPath, sandboxMessaging, verifyManualConfig } from './payment-config.js';
+import { submitManualEvidence } from './manual-payments.js';
 
 const pool = database();
 const queues = new Map<string, Promise<void>>();
@@ -41,15 +44,22 @@ async function drainOutbox(sock: ReturnType<typeof makeWASocket>, pool: Pool) {
   `);
   for (const row of result.rows) {
     try {
-      if ((process.env.MIDTRANS_ENV ?? 'sandbox') === 'sandbox' &&
+      if (sandboxMessaging() &&
           !(process.env.WA_TEST_NUMBERS ?? '').split(',').map(s=>s.trim()).includes(row.recipient_wa_number)) {
         await pool.query(`UPDATE message_outbox SET status='pending',attempts=attempts-1,
           next_attempt_at=now()+interval '5 minutes' WHERE id=$1`,[row.id]);
         continue;
       }
-      const text = outboxText(row.message_type, row.payload);
-      if (!text) throw new Error('Unsupported message type');
-      await sock.sendMessage(`${row.recipient_wa_number}@s.whatsapp.net`, { text });
+      if(row.message_type==='manual_evidence') {
+        const evidence=(await pool.query('SELECT m.evidence_path,m.evidence_mime FROM manual_payment_reviews m WHERE m.id=$1 AND EXISTS(SELECT 1 FROM admins WHERE wa_number=$2 AND active)',[row.payload.review_id,row.recipient_wa_number])).rows[0];
+        if(!evidence) throw Error('Evidence access unavailable');
+        const data=await readFile(evidence.evidence_path);
+        await sock.sendMessage(`${row.recipient_wa_number}@s.whatsapp.net`,evidence.evidence_mime==='application/pdf'?{document:data,mimetype:evidence.evidence_mime,fileName:`bukti-${row.payload.order_id}.pdf`}:{image:data,caption:`Bukti ${row.payload.order_id}. Cocokkan dengan transaksi GoPay Merchant.`});
+      } else {
+        const text = outboxText(row.message_type, row.payload);
+        if (!text) throw new Error('Unsupported message type');
+        await sock.sendMessage(`${row.recipient_wa_number}@s.whatsapp.net`, { text });
+      }
       await pool.query(`UPDATE message_outbox SET status = 'sent', sent_at = now() WHERE id = $1`, [row.id]);
     } catch {
       await pool.query(`
@@ -101,17 +111,30 @@ async function connect() {
       // does not supply its alternate phone JID.
       const sessionId = phone && /^[1-9][0-9]{7,14}$/.test(phone) ? phone : jid;
       const content = normalizeMessageContent(message.message);
-      const body = content && bodyText(content);
+      const body = content && (bodyText(content) || content.imageMessage?.caption || content.documentMessage?.caption || '');
+      const media=content?.imageMessage??content?.documentMessage;
       console.log(`Pesan masuk: ${jid.endsWith('@lid') ? 'LID' : 'nomor'}, teks: ${body ? 'ya' : 'tidak'}`);
-      if (body && message.key.id) {
+      if ((body || media) && message.key.id) {
         const allowed=(process.env.WA_TEST_NUMBERS ?? '').split(',').map(s=>s.trim());
-        if ((process.env.MIDTRANS_ENV ?? 'sandbox')==='sandbox' && !allowed.includes(sessionId)) continue;
+        if (sandboxMessaging() && !allowed.includes(sessionId)) continue;
         const id=message.key.id;
         const task=(queues.get(sessionId) ?? Promise.resolve()).then(async()=>{
           if((await pool.query('SELECT 1 FROM incoming_messages WHERE sender=$1 AND message_id=$2',[sessionId,id])).rowCount) return;
           try {
-            const reply=await buyerMessage(pool,sessionId,body);
-            await sock.sendMessage(jid,{text:reply});
+            if(media) {
+              const match=body?.trim().match(/^bukti\s+(ORD-[A-F0-9]{16})$/i);
+              if(!match) { await sock.sendMessage(jid,{text:'Kirim ulang foto/PDF bukti dengan caption: bukti ORD-... sesuai ID pesanan.'}); return; }
+              if(Number(media.fileLength??0)>5*1024*1024) {await sock.sendMessage(jid,{text:'Bukti maksimal 5 MB.'});return;}
+              const stream=await downloadMediaMessage(message,'stream',{});
+              const chunks:Buffer[]=[];let size=0;
+              for await(const chunk of stream) {size+=chunk.length;if(size>5*1024*1024){stream.destroy();throw Error('Bukti maksimal 5 MB.');}chunks.push(chunk);}
+              await submitManualEvidence(pool,sessionId,match[1].toUpperCase(),{data:Buffer.concat(chunks),mime:media.mimetype??''});
+              await sock.sendMessage(jid,{text:`Bukti ${match[1].toUpperCase()} diterima. Status: menunggu verifikasi admin. Pesanan belum dianggap lunas.`});
+            } else {
+              const reply=await buyerMessage(pool,sessionId,body??'');
+              if(manualPaymentsActive()&&reply.includes('\nQRIS manual\n')) await sock.sendMessage(jid,{image:await readFile(qrisPath()),caption:reply});
+              else await sock.sendMessage(jid,{text:reply});
+            }
             await pool.query('INSERT INTO incoming_messages(sender,message_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[sessionId,id]);
           } catch {
             console.error('Incoming message processing failed; no secrets logged.');
@@ -134,7 +157,7 @@ async function connect() {
 }
 
 for(const signal of ['SIGINT','SIGTERM']) process.on(signal, () => { stopped = true; void pool.end().then(() => process.exit(0)); });
-void pool.query(`UPDATE message_outbox SET status = 'failed' WHERE status = 'sending'`)
+void verifyManualConfig().then(()=>pool.query(`UPDATE message_outbox SET status = 'failed' WHERE status = 'sending'`))
   .then(() => connect())
   .catch(() => { console.error('Startup failed; check private configuration and database connectivity.'); process.exit(1); });
 

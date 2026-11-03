@@ -5,7 +5,8 @@ import { activeAdmin } from './catalog-manage.js';
 export async function orderStatus(pool: Pool, phone: string, id: string) {
   const admin = await activeAdmin(pool,phone);
   const result=await pool.query(`SELECT o.public_id,o.product_name_snapshot,o.variant_name_snapshot,
-    o.status,o.total_idr,o.fulfillment_email,o.warranty_ends_at,p.status AS payment_status
+    o.status,o.total_idr,o.fulfillment_email,o.warranty_ends_at,
+    CASE WHEN o.payment_environment='qris_manual' THEN o.payment_status ELSE p.status END AS payment_status
     FROM orders o JOIN customers c ON c.id=o.customer_id LEFT JOIN payments p ON p.order_id=o.id
     WHERE o.public_id=$1 AND (c.wa_number=$2 OR $3)`,[id,phone,admin]);
   return result.rows[0] ?? null;
@@ -23,7 +24,7 @@ export async function completeOrder(pool: Pool, phone: string, id: string) {
     if(order.status==='completed') {await client.query('COMMIT');return false;}
     if(!order.paid_at || !['processing','paid'].includes(order.status) ||
       (order.requires_email_snapshot && !order.fulfillment_email)) throw new Error('Pesanan belum siap diselesaikan.');
-    await client.query(`UPDATE orders SET status='completed',completed_at=now(),completed_by_admin_id=$2,
+    await client.query(`UPDATE orders SET status='completed',fulfillment_status='completed',completed_at=now(),completed_by_admin_id=$2,
       warranty_starts_at=CASE WHEN warranty_days_snapshot>0 THEN now() ELSE NULL END,
       warranty_ends_at=CASE WHEN warranty_days_snapshot>0 THEN now()+warranty_days_snapshot*interval '1 day' ELSE NULL END
       WHERE id=$1`,[order.id,admin.id]);

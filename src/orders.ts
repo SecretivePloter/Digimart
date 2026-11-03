@@ -123,7 +123,7 @@ export async function handlePaymentNotice(
         o.requires_email_snapshot AS requires_email
       FROM orders o JOIN customers c ON c.id = o.customer_id
       JOIN variants v ON v.id=o.variant_id
-      WHERE o.public_id = $1 FOR UPDATE OF o
+      WHERE o.public_id = $1 AND o.payment_environment IN ('sandbox','production') FOR UPDATE OF o
     `, [notice.order_id]);
     const order = result.rows[0];
     if (!order) throw new Error('Unknown order');
@@ -147,7 +147,7 @@ export async function handlePaymentNotice(
         UPDATE payments SET status = 'settlement', settled_at = now() WHERE id = $1
       `, [payment.rows[0].id]);
       await client.query(`
-        UPDATE orders SET status = $2, paid_at = now()
+        UPDATE orders SET status = $2, paid_at = now(), payment_status='paid',fulfillment_status='processing'
         WHERE id = $1
       `, [order.id, order.requires_email && !order.fulfillment_email ? 'awaiting_customer_data' : 'processing']);
       if(order.requires_email && !order.fulfillment_email) await enqueue(client, order.phone, 'request_email', {

@@ -33,6 +33,13 @@ test('isolated SQL checkout: email, availability, authoritative payment, ownersh
     assert.match(await buyerMessage(pool,buyer,'list'),/TEST ONLY/);
     assert.match(await buyerMessage(pool,buyer,'1'),/Email/);
     assert.match(await buyerMessage(pool,buyer,'3'),/habis/);
+    process.env.PAYMENTS_ENABLED='false';
+    try {
+      assert.match(await buyerMessage(pool,buyer,'1'),/Pembayaran otomatis belum tersedia/);
+      assert.match(await buyerMessage(pool,buyer,'konfirmasi beli'),/Belum ada tagihan/);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM orders')).rows[0].n,0);
+      assert.equal((await pool.query('SELECT step FROM conversation_states')).rows[0].step,'variant');
+    } finally { delete process.env.PAYMENTS_ENABLED; }
     assert.match(await buyerMessage(pool,buyer,'1'),/Kirim email/);
     assert.match(await buyerMessage(pool,buyer,'wrong'),/valid/);
     assert.match(await buyerMessage(pool,buyer,'test@example.com'),/konfirmasi beli/);

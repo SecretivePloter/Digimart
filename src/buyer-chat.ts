@@ -5,6 +5,8 @@ import { calculateQuote,feePolicyFromEnv } from './quote.js';
 import { createOrder,midtransFromEnv,validEmail } from './orders.js';
 import { completeOrder,orderStatus,salesReport,supplyEmail } from './order-operations.js';
 import { adminMessage } from './admin-wa.js';
+import { startManualOrder } from './manual-payments.js';
+import { manualPaymentsActive, merchantName, verifyManualConfig } from './payment-config.js';
 
 export async function buyerMessage(pool: Pool, phone: string, text: string): Promise<string> {
   if(!/^[1-9][0-9]{7,14}$/.test(phone)) return 'Nomor WhatsApp belum dapat diverifikasi. Hubungi admin.';
@@ -37,8 +39,15 @@ export async function buyerMessage(pool: Pool, phone: string, text: string): Pro
     return `Email: ${text.trim()}\nTotal: Rp${Number(state.quoted_total_idr).toLocaleString('id-ID')}\nKetik konfirmasi beli untuk membuat tagihan.`;
   }
   if(['konfirmasi','konfirmasi beli','payment'].includes(lower)) {
+    if (process.env.PAYMENTS_ENABLED === 'false') return 'Pembayaran otomatis belum tersedia. Hubungi admin untuk informasi pemesanan. Belum ada tagihan yang dibuat.';
     if(!state?.selected_variant_id || state.step!=='confirm') return 'Pilih produk dan varian dahulu. Ketik list.';
     if(!product) return 'Produk sudah tidak aktif. Ketik list.';
+    if(manualPaymentsActive()) {
+      await verifyManualConfig();
+      const order=await startManualOrder(pool,phone,String(state.selected_variant_id),{
+        email:state.fulfillment_email??undefined,expectedTotal:Number(state.quoted_total_idr)});
+      return `Pesanan ${order.id}\n${order.product} / ${order.variant}\nTotal: Rp${order.total.toLocaleString('id-ID')}\nQRIS manual\nMerchant: ${merchantName()}\nMasukkan nominal persis sesuai tagihan. Kirim foto bukti dengan caption: bukti ${order.id}\nBukti akan diperiksa admin melalui GoPay Merchant, bukan otomatis dianggap lunas.\nCek: status ${order.id}`;
+    }
     const order=await createOrder(pool,phone,String(state.selected_variant_id),midtransFromEnv(),{
       email:state.fulfillment_email ?? undefined,expectedTotal:Number(state.quoted_total_idr)});
     return `Pesanan ${order.publicId}\nTotal: Rp${order.totalIdr.toLocaleString('id-ID')}\n`+
@@ -50,6 +59,7 @@ export async function buyerMessage(pool: Pool, phone: string, text: string): Pro
     const variant=product.variants[Number(lower)-1];
     if(!variant) return 'Nomor varian tidak valid.';
     if(variant.stock_status==='out') return 'Varian habis dan tidak bisa dipesan. Pilih varian lain atau ketik list.';
+    if (process.env.PAYMENTS_ENABLED === 'false') return `${product.name} / ${variant.name}\nHarga produk: Rp${Number(variant.base_price_idr).toLocaleString('id-ID')}\nPembayaran otomatis belum tersedia. Hubungi admin untuk informasi pemesanan. Belum ada tagihan yang dibuat.`;
     const quote=calculateQuote(Number(variant.base_price_idr),feePolicyFromEnv());
     await pool.query(`UPDATE conversation_states SET selected_variant_id=$2,step=$3,
       fulfillment_email=NULL,quoted_total_idr=$4,updated_at=now() WHERE customer_id=$1`,
