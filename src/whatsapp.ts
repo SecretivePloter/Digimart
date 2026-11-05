@@ -8,7 +8,7 @@ import { buyerMessage } from './buyer-chat.js';
 import { reconcilePayments } from './order-operations.js';
 import { manualPaymentsActive, qrisPath, sandboxMessaging, verifyManualConfig } from './payment-config.js';
 import { submitManualEvidence } from './manual-payments.js';
-import { downloadCommand, downloaderHelp, withDownloadedVideo } from './downloader.js';
+import { downloadCommand, downloaderHelp, withDownloadedMedia } from './downloader.js';
 
 const pool = database();
 const queues = new Map<string, Promise<void>>();
@@ -125,11 +125,13 @@ async function connect() {
             const download=downloadCommand(body??'');
             if(download!==null&&!media) {
               if(process.env.DOWNLOADER_ENABLED!=='true')await sock.sendMessage(jid,{text:'Downloader belum aktif.'});
-              else if(!download)await sock.sendMessage(jid,{text:downloaderHelp});
+              else if(!download.input)await sock.sendMessage(jid,{text:downloaderHelp});
               else {
                 try {
-                  await withDownloadedVideo(sessionId,download,async path=>{
-                    await sock.sendMessage(jid,{document:{url:path},mimetype:'video/mp4',fileName:'video.mp4',caption:'Unduhan selesai.'});
+                  await withDownloadedMedia(sessionId,download.input,download.command,async (path,kind)=>{
+                    if(kind==='image') return sock.sendMessage(jid,{image:{url:path}});
+                    if(kind==='audio') return sock.sendMessage(jid,{audio:{url:path},mimetype:'audio/mpeg',ptt:false});
+                    return sock.sendMessage(jid,{video:{url:path},mimetype:'video/mp4'});
                   });
                 } catch(e) {await sock.sendMessage(jid,{text:e instanceof Error?e.message:'Unduhan gagal. Coba lagi nanti.'});}
               }

@@ -1,12 +1,23 @@
-import { withDownloadedVideo } from '../dist/downloader.js';
-import { stat,open } from 'node:fs/promises';
-const url=process.argv[2];
-if(!url)throw Error('Pass a public video URL');
-try {
- await withDownloadedVideo('isolated-runtime-probe',url,async path=>{
-   const info=await stat(path),file=await open(path,'r');
-   try{const header=Buffer.alloc(12);await file.read(header,0,12,0);if(header.toString('ascii',4,8)!=='ftyp')throw Error('Invalid MP4 header');}
-   finally{await file.close();}
-   console.log(`PASS real downloader: MP4 ${info.size} bytes; no WhatsApp message sent; temporary file removed after probe.`);
- });
-} catch(e){console.error(e.message);process.exitCode=1;}
+import { withDownloadedMedia } from '../dist/downloader.js';
+import { readFile, stat } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+
+const [input, mode='/dl'] = process.argv.slice(2);
+const cases = input && input !== '--cases' ? [[mode,input,null]] :
+  JSON.parse(await readFile(new URL('./downloader-cases.json', import.meta.url), 'utf8'));
+for(const [command, url, expected] of cases) {
+  const items=[];
+  try {
+    await withDownloadedMedia(url,url,command,async (path,kind)=>{
+      const streams=JSON.parse(execFileSync('ffprobe',['-v','error','-show_streams','-of','json',path],{encoding:'utf8'})).streams;
+      if(kind==='audio') assert.ok(streams.some(s=>s.codec_name==='mp3'));
+      else if(kind==='image') assert.ok(streams.some(s=>['png','mjpeg','webp'].includes(s.codec_name)));
+      else assert.ok(streams.some(s=>s.codec_type==='video' && !s.disposition?.attached_pic));
+      items.push({kind,bytes:(await stat(path)).size});
+    });
+    if(expected==='carousel') assert.ok(items.length>=2 && items.every(m=>m.kind==='image'));
+    else if(expected) assert.ok(items.some(m=>m.kind===expected));
+    console.log('PASS',command,url,items);
+  } catch(e) {console.error('FAIL',command,url,e.message);process.exitCode=1;}
+}
