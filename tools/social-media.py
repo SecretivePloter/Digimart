@@ -99,7 +99,9 @@ def facebook_share(url, photo):
 def video(url, audio):
     options = dict(noplaylist=True, socket_timeout=10, retries=1, fragment_retries=0,
                    max_filesize=LIMIT, outtmpl='media-01.%(ext)s', quiet=True,
-                   format='bestaudio/best' if audio else 'best[ext=mp4][vcodec!=none][acodec!=none]/bestvideo[ext=mp4]+bestaudio[ext=m4a]',
+                   js_runtimes={'node': {}},
+                   format='bestaudio[protocol=https]/best[protocol=https]' if audio else
+                          'best[protocol=https][ext=mp4][vcodec!=none][acodec!=none]/bestvideo[protocol=https][ext=mp4]+bestaudio[protocol=https][ext=m4a]',
                    merge_output_format='mp4', allowed_extractors=['youtube','facebook','instagram','tiktok','tiktok:vm'],
                    match_filter=yt_dlp.utils.match_filter_func('!is_live & duration<=?600'))
     if audio:

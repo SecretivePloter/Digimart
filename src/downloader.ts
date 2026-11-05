@@ -45,7 +45,7 @@ async function runDownload(url:string,dir:string,command:string) {
   const executable=process.env.DOWNLOADER_PYTHON ?? '/opt/lidealabs/tools/social-venv/bin/python';
   await new Promise<void>((resolvePromise,reject)=>{
     const child=spawn(executable,[resolve('tools/social-media.py'), url, command === '.ytmp3' ? 'mp3' : 'auto'],{cwd:dir,shell:false,windowsHide:true,detached:process.platform!=='win32',
-      env:{PATH:process.env.PATH,HOME:dir,TMPDIR:dir,LANG:'C.UTF-8', HTTPS_PROXY:process.env.DOWNLOADER_HTTPS_PROXY},stdio:['ignore','ignore','pipe']});
+      env:{PATH:process.env.PATH,HOME:dir,TMPDIR:dir,LANG:'C.UTF-8', HTTPS_PROXY:process.env.DOWNLOADER_HTTPS_PROXY, REQUESTS_CA_BUNDLE:process.env.REQUESTS_CA_BUNDLE, SSL_CERT_FILE:process.env.SSL_CERT_FILE},stdio:['ignore','ignore','pipe']});
     let output='',stopped=false;
     const stop=()=>{if(stopped)return;stopped=true;try{if(process.platform!=='win32'&&child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL');}catch{}};
     const timeout=setTimeout(()=>{output+=' timeout';stop();},90000);
