@@ -4,6 +4,7 @@ import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import type { Pool } from 'pg';
 import { database } from './services.js';
+import { messageRoute, groupReply } from './group-chat.js';
 import { buyerMessage } from './buyer-chat.js';
 import { reconcilePayments } from './order-operations.js';
 import { manualPaymentsActive, qrisPath, sandboxMessaging, verifyManualConfig } from './payment-config.js';
@@ -103,14 +104,9 @@ async function connect() {
     for (const message of messages) {
       const jid = message.key.remoteJid;
       if (!jid || message.key.fromMe || !message.message) continue;
-      if (!jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@lid')) continue;
-      const alternate = message.key.remoteJidAlt;
-      const phoneJid = jid.endsWith('@s.whatsapp.net') ? jid
-        : alternate?.endsWith('@s.whatsapp.net') ? alternate : undefined;
-      const phone = phoneJid?.split('@')[0];
-      // A LID is not a phone number. Keep the chat usable even when WhatsApp
-      // does not supply its alternate phone JID.
-      const sessionId = phone && /^[1-9][0-9]{7,14}$/.test(phone) ? phone : jid;
+      const route = messageRoute(message.key);
+      if (!route) continue;
+      const { sessionId, isGroup } = route;
       const content = normalizeMessageContent(message.message);
       const body = content && (bodyText(content) || content.imageMessage?.caption || content.documentMessage?.caption || '');
       const media=content?.imageMessage??content?.documentMessage;
@@ -120,7 +116,7 @@ async function connect() {
         if (sandboxMessaging() && !allowed.includes(sessionId)) continue;
         const id=message.key.id;
         const task=(queues.get(sessionId) ?? Promise.resolve()).then(async()=>{
-          if((await pool.query('SELECT 1 FROM incoming_messages WHERE sender=$1 AND message_id=$2',[sessionId,id])).rowCount) return;
+          if((await pool.query('SELECT 1 FROM incoming_messages WHERE sender=$1 AND message_id=$2',[isGroup ? `${jid}:${sessionId}` : sessionId,id])).rowCount) return;
           try {
             const download=downloadCommand(body??'');
             if(download!==null&&!media) {
@@ -133,6 +129,9 @@ async function connect() {
                   });
                 } catch(e) {await sock.sendMessage(jid,{text:e instanceof Error?e.message:'Unduhan gagal. Coba lagi nanti.'});}
               }
+            } else if(isGroup) {
+              const reply=await groupReply(pool,body??'',Boolean(media));
+              if(reply) await sock.sendMessage(jid,{text:reply},{quoted:message});
             } else if(media) {
               const match=body?.trim().match(/^bukti\s+(ORD-[A-F0-9]{16})$/i);
               if(!match) { await sock.sendMessage(jid,{text:'Kirim ulang foto/PDF bukti dengan caption: bukti ORD-... sesuai ID pesanan.'}); return; }
@@ -147,7 +146,7 @@ async function connect() {
               if(manualPaymentsActive()&&reply.includes('\nQRIS manual\n')) await sock.sendMessage(jid,{image:await readFile(qrisPath()),caption:reply});
               else await sock.sendMessage(jid,{text:reply});
             }
-            await pool.query('INSERT INTO incoming_messages(sender,message_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[sessionId,id]);
+            await pool.query('INSERT INTO incoming_messages(sender,message_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[isGroup ? `${jid}:${sessionId}` : sessionId,id]);
           } catch {
             console.error('Incoming message processing failed; no secrets logged.');
             await sock.sendMessage(jid,{text:'Permintaan belum dapat diproses. Cek status pesanan atau hubungi admin sebelum mengulang pembayaran.'});
