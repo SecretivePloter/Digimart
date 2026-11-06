@@ -3,6 +3,7 @@ import ipaddress
 import json
 import os
 import socket
+import subprocess
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
@@ -130,5 +131,39 @@ def run(url, mode):
         if not photo: video(canonical, False)
     else: video(url, mode == 'mp3')
 
+def prepare_videos():
+    for source in sorted(Path.cwd().glob('media-*.mp4')):
+        probe = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(source)],
+            capture_output=True, text=True, check=True, timeout=10)
+        streams = json.loads(probe.stdout)['streams']
+        if not any(s.get('codec_type') == 'video' and not s.get('disposition', {}).get('attached_pic') for s in streams):
+            raise ValueError('No video stream')
+        target = source.with_suffix('.ready.mp4')
+        try:
+            # Decode and re-encode the actual stream to an Android-compatible MP4.
+            subprocess.run([
+                'ffmpeg', '-nostdin', '-v', 'error', '-xerror', '-y',
+                '-protocol_whitelist', 'file,crypto,data', '-i', str(source),
+                '-map', '0:v:0', '-map', '0:a:0?', '-sn', '-dn',
+                '-vf', "scale='min(1280,iw)':-2:force_divisible_by=2,format=yuv420p",
+                '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25',
+                '-profile:v', 'main', '-level:v', '4.0', '-fpsmax', '30',
+                '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+                '-movflags', '+faststart', '-fs', str(LIMIT + 1), str(target)
+            ], check=True, timeout=70, stdout=subprocess.DEVNULL)
+            if not 0 < target.stat().st_size <= LIMIT:
+                raise ValueError('Video size limit')
+            # Verify decoding reaches EOF before making the file available for delivery.
+            subprocess.run([
+                'ffmpeg', '-nostdin', '-v', 'error', '-xerror',
+                '-protocol_whitelist', 'file,crypto,data', '-i', str(target),
+                '-f', 'null', '-'
+            ], check=True, timeout=20, stdout=subprocess.DEVNULL)
+            target.replace(source)
+        finally:
+            target.unlink(missing_ok=True)
+
 if __name__ == '__main__':
     run(sys.argv[1], sys.argv[2])
+    prepare_videos()
