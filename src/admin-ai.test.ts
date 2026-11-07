@@ -14,6 +14,8 @@ test('admin mode toggles, preserves context, accepts media, and expires after tw
     if (sql.startsWith('UPDATE admin_ai_mode')) return { rows: [] };
     if (sql.startsWith('DELETE FROM admin_ai_mode')) { mode = false; return { rows: [] }; }
     if (sql.startsWith('SELECT messages')) return { rows: stored ? [{ messages: stored }] : [] };
+    if (sql.startsWith('DELETE FROM admin_ai_images') || sql.startsWith('INSERT INTO admin_ai_images')) return {rows:[]};
+    if (sql.startsWith('SELECT data,media_type')) return {rows:[]};
     if (sql.startsWith('INSERT INTO admin_ai_chats')) { stored = JSON.parse(params[1] as string); return { rows: [] }; }
     if (sql.startsWith('DELETE FROM admin_ai_chats')) { stored = null; return { rows: [] }; }
     throw new Error('Unexpected query: ' + sql);

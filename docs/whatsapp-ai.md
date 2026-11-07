@@ -33,8 +33,46 @@ Riwayat disimpan per nomor admin, maksimal enam pasang pesan terakhir. Asisten i
 tidak terhubung langsung ke percakapan ChatGPT, Library, atau data Digimart.
 Kunci API yang belum tersedia akan menghasilkan petunjuk konfigurasi, bukan membuat
 bot gagal memulai.
-Lampiran hanya dipakai untuk permintaan saat itu; riwayat menyimpan teks dan nama lampiran,
-bukan berkasnya. Dokumen DOCX/TXT dibaca sebagai teks, PDF dan gambar dikirim ke model.
+Riwayat JSON menyimpan teks dan nama lampiran. Dokumen DOCX/TXT dibaca sebagai teks
+maksimal 40.000 karakter, PDF dan gambar dikirim ke model.
+
+## Membuat dan mengedit gambar
+
+Aktifkan `.ai`, lalu gunakan bahasa biasa, misalnya `Buatkan poster kopi minimalis`
+atau kirim foto dengan caption `Ubah latar belakangnya menjadi biru`.
+Revisi berikutnya cukup `Buat warnanya lebih hangat` tanpa unggah ulang.
+Gambar juga boleh dikirim dulu, diikuti instruksi edit pada pesan berikutnya.
+Tool gambar menghasilkan satu gambar per permintaan dan bot mengirimkannya sebagai
+gambar WhatsApp. Ketik `.ai file` untuk mengirim ulang file asli sebagai dokumen
+tanpa kompresi WhatsApp dan tanpa memanggil API gambar lagi.
+
+Model gambar default `gpt-image-2.5-flare`, PNG, kualitas medium, ukuran otomatis.
+Model dapat diganti lewat `OPENAI_IMAGE_MODEL` di environment layanan. Model percakapan
+tetap memakai `OPENAI_MODEL`. Generasi gambar memakai saldo OpenAI API.
+Tool hanya dipanggil untuk permintaan gambar, bukan pertanyaan teks atau analisis gambar.
+Waktu tunggu hingga tiga menit; permintaan API tidak diulang otomatis.
+
+Satu gambar referensi terakhir per admin disimpan privat di tabel `admin_ai_images`,
+terpisah dari JSON riwayat dan dibatasi 8 MB. Gambar baru menggantikan yang lama.
+Referensi dibersihkan saat `.ai reset`, keluar mode, atau saat pesan berikutnya
+mendeteksi mode kedaluwarsa. Backup database mengikuti perlindungan database bot.
+PDF/DOCX/TXT tidak disimpan sebagai berkas referensi.
+
+Jika saldo habis, bot menyampaikan penyebabnya. Isi saldo akun/proyek API yang
+memiliki kunci bot, lalu coba lagi; mengganti kunci atau restart tidak diperlukan.
+Langganan ChatGPT terpisah dari saldo API. Akses admin, reset, keluar mode, dan
+pengiriman ulang `.ai file` tetap dapat digunakan tanpa permintaan model baru.
+
+Uji generasi dan edit melalui API (memakai saldo API), semua data uji di-rollback:
+
+```sh
+cd /opt/lidealabs/current
+runuser -u lidealabs -- node --env-file=/etc/lidealabs/app.env deploy/smoke-admin-ai-images.mjs
+```
+
+Uji ini menyimpan dua gambar sintetis di folder sementara yang dicetak di akhir.
+Periksa gambar pertama persegi biru dan gambar kedua persegi merah. Ini tidak
+mengirim pesan WhatsApp. Uji pengiriman ke ponsel harus dilakukan dari nomor admin.
 
 ## VPS LIDEALABS
 

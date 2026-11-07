@@ -121,7 +121,11 @@ async function connect() {
           if((await pool.query('SELECT 1 FROM incoming_messages WHERE sender=$1 AND message_id=$2',[isGroup ? `${jid}:${sessionId}` : sessionId,id])).rowCount) return;
           try {
             const aiReply = !isGroup ? await adminAiMessage(pool,sessionId,body??'',
-              media ? () => readWhatsAppAttachment(message) : undefined) : null;
+              media ? () => readWhatsAppAttachment(message) : undefined, undefined, pool, async(image,original)=>{
+                if(original) await sock.sendMessage(jid,{document:image.data,mimetype:image.mediaType,
+                  fileName:image.mediaType==='image/jpeg'?'digimart-ai.jpg':image.mediaType==='image/webp'?'digimart-ai.webp':'digimart-ai.png'});
+                else await sock.sendMessage(jid,{image:image.data,caption:'Hasil AI. Ketik .ai file untuk file asli tanpa kompresi WhatsApp.'});
+              }) : null;
             if (aiReply !== null) {
               await sock.sendMessage(jid,{text:aiReply});
               await pool.query('INSERT INTO incoming_messages(sender,message_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[sessionId,id]);
