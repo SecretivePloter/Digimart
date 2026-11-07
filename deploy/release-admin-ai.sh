@@ -9,6 +9,8 @@ release=/opt/lidealabs/releases/20261107-admin-ai-$commit
 test -d "$previous"
 test ! -e "$release"
 test -f "$archive"
+actual=$(git get-tar-commit-id < "$archive")
+test "$actual" = "$commit" || { echo 'Archive commit does not match requested commit'; exit 1; }
 backup=/var/backups/lidealabs/before-admin-ai-$(date -u +%Y%m%dT%H%M%SZ).dump
 install -d -m 0700 /var/backups/lidealabs
 runuser -u postgres -- pg_dump -Fc lidealabs > "$backup"

@@ -41,7 +41,7 @@ export async function readWhatsAppAttachment(message: WAMessage): Promise<AiAtta
   const isDocx = mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
     (mime === 'application/octet-stream' && !!filename?.toLowerCase().endsWith('.docx'));
   const isTxt = mime === 'text/plain' || (mime === 'application/octet-stream' && !!filename?.toLowerCase().endsWith('.txt'));
-  if (image ? !imageTypes.includes(mime) : !(mime === 'application/pdf' || isDocx || isTxt))
+  if (image ? !imageTypes.includes(mime) : !(imageTypes.includes(mime) || mime === 'application/pdf' || isDocx || isTxt))
     throw new UnsupportedAiAttachment('Format belum didukung. Kirim JPG, PNG, WEBP, PDF, DOCX, atau TXT (maksimal 8 MB).');
   const stream = await downloadMediaMessage(message, 'stream', {});
   const chunks: Buffer[] = [];

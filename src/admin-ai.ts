@@ -48,7 +48,7 @@ async function run(authPool: Pool, pool: Pool, phone: string, text: string, load
       await pool.query('DELETE FROM admin_ai_mode WHERE phone=$1', [phone]);
       return 'Mode AI nonaktif. Pesan berikutnya kembali ke bot Digimart.';
     }
-    if (!process.env.OPENAI_API_KEY) return 'AI belum diaktifkan. Isi OPENAI_API_KEY pada .env.local lalu mulai ulang bot.';
+    if (!process.env.OPENAI_API_KEY) return 'AI belum diaktifkan. Isi OPENAI_API_KEY pada konfigurasi lingkungan layanan lalu mulai ulang bot.';
     await pool.query(`INSERT INTO admin_ai_mode(phone,last_activity) VALUES($1,now())
       ON CONFLICT(phone) DO UPDATE SET last_activity=now()`, [phone]);
     return 'Mode AI aktif. Kirim pesan, gambar, atau dokumen. Ketik .ai lagi untuk keluar. Mode berakhir otomatis setelah 2 jam tanpa pesan.';
@@ -61,7 +61,7 @@ async function run(authPool: Pool, pool: Pool, phone: string, text: string, load
   }
   if (text.length > 2000) return 'Pesan terlalu panjang. Batasi hingga 2.000 karakter.';
   if (!text && !loadAttachment) return null;
-  if (!process.env.OPENAI_API_KEY) return 'AI belum diaktifkan. Isi OPENAI_API_KEY pada .env.local lalu mulai ulang bot.';
+  if (!process.env.OPENAI_API_KEY) return 'AI belum diaktifkan. Isi OPENAI_API_KEY pada konfigurasi lingkungan layanan lalu mulai ulang bot.';
 
   const attachment = loadAttachment ? await loadAttachment() : undefined;
   const row = await pool.query<{ messages: unknown }>('SELECT messages FROM admin_ai_chats WHERE phone=$1', [phone]);

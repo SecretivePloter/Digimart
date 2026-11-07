@@ -56,6 +56,20 @@ Migration runner mencatat nama file lengkap, sehingga `005_admin_ai.sql` dan
 `006_admin_ai_mode.sql` dapat berdampingan dengan migrasi pesanan dan QRIS bernomor sama.
 Tidak ada perubahan data katalog atau pembayaran dalam migrasi AI.
 
+Uji API langsung dari VPS (memakai kuota OpenAI, data uji database di-rollback,
+tanpa mengirim pesan WhatsApp):
+
+```sh
+cd /opt/lidealabs/current
+runuser -u lidealabs -- node --env-file=/etc/lidealabs/app.env deploy/smoke-admin-ai.mjs
+```
+
+Fixture gambar dan PDF sintetis tersedia di `deploy/ai-fixtures`. Uji ini memeriksa
+teks dan konteks, seluruh format lampiran, reset, keluar mode, kondisi kedaluwarsa
+dengan waktu dimundurkan, penolakan ukuran/format, dan handler katalog nyata.
+Pengunduhan lampiran dari WhatsApp serta penerimaan di ponsel tetap memerlukan
+uji penerimaan manual di bawah.
+
 Rollback kode, gunakan target yang dicatat di `PREVIOUS_RELEASE` release baru:
 
 ```sh
