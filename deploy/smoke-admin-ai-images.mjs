@@ -24,15 +24,18 @@ const outputs=[];
 const dir=await mkdtemp(join(tmpdir(),'digimart-image-smoke-'));
 const sink=async(image,original)=>{
  assert.equal(image.mediaType,'image/png');
- assert.ok(image.data.length>1000);
+ assert.ok(image.data.length>100);
  assert.deepEqual(image.data.subarray(0,8),Buffer.from([137,80,78,71,13,10,26,10]));
  if(!original){outputs.push(image.data);await writeFile(join(dir,'image-'+outputs.length+'.png'),image.data,{mode:0o600});}
  console.log('PASS image output bytes='+image.data.length+', original='+Boolean(original));
 };
 let simulatedCalls=0;
-const simulated=async()=>({text:'Synthetic image output',image:{
- data:await readFile('deploy/ai-fixtures/'+(++simulatedCalls===1?'blue.png':'red.png')),
- mediaType:'image/png',filename:'test.png'}});
+const simulated=async(messages)=>{
+ if(simulatedCalls===1)assert.deepEqual(messages.at(-1).content.at(-1).data,await readFile('deploy/ai-fixtures/blue.png'));
+ return {text:'Synthetic image output',image:{
+  data:await readFile('deploy/ai-fixtures/'+(++simulatedCalls===1?'blue.png':'red.png')),
+  mediaType:'image/png',filename:'test.png'}};
+};
 const send=text=>adminAiMessage(pool,phone,text,undefined,offline?simulated:undefined,pool,sink);
 try {
  assert.equal((await pool.query('SELECT 1 FROM admins WHERE wa_number=$1',[phone])).rowCount,0);

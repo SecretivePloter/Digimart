@@ -73,6 +73,8 @@ runuser -u lidealabs -- node --env-file=/etc/lidealabs/app.env deploy/smoke-admi
 Uji ini menyimpan dua gambar sintetis di folder sementara yang dicetak di akhir.
 Periksa gambar pertama persegi biru dan gambar kedua persegi merah. Ini tidak
 mengirim pesan WhatsApp. Uji pengiriman ke ponsel harus dilakukan dari nomor admin.
+Tambahkan `--offline` untuk menguji penyimpanan dan alur pengiriman dengan model
+simulasi tanpa memakai saldo API. Hasil offline tidak membuktikan generasi OpenAI.
 
 ## VPS LIDEALABS
 
