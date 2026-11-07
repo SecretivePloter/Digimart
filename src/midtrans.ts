@@ -20,10 +20,13 @@ export function verifyNotification(payload: MidtransNotification, serverKey: str
   return timingSafeEqual(expected, Buffer.from(payload.signature_key, 'hex'));
 }
 
-export function paymentState(payload: MidtransNotification): 'paid' | 'expired' | 'pending' | 'rejected' {
-  if (payload.transaction_status === 'settlement' && payload.fraud_status !== 'deny') return 'paid';
+export function paymentState(payload: MidtransNotification): 'paid' | 'expired' | 'pending' | 'cancelled' | 'failed' | 'rejected' {
+  if (payload.transaction_status === 'settlement' && payload.status_code === '200' &&
+      (!payload.fraud_status || payload.fraud_status === 'accept')) return 'paid';
   if (payload.transaction_status === 'expire') return 'expired';
   if (payload.transaction_status === 'pending') return 'pending';
+  if (payload.transaction_status === 'cancel') return 'cancelled';
+  if (payload.transaction_status === 'deny' || payload.transaction_status === 'failure') return 'failed';
   return 'rejected';
 }
 

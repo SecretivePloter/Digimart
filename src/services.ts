@@ -3,7 +3,13 @@ import { S3Client } from '@aws-sdk/client-s3';
 
 export function database() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  return new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5,
+    connectionTimeoutMillis: 15000, idleTimeoutMillis: 30000,
+    statement_timeout: 30000, idle_in_transaction_session_timeout: 30000,
+    keepAlive: true });
+  // Idle sockets can fail during a database restart without an active query.
+  pool.on('error', () => console.error('Database idle connection lost; pool will reconnect.'));
+  return pool;
 }
 
 export function storage() {

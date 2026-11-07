@@ -1,0 +1,27 @@
+[Unit]
+Description=LIDEALABS %i
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=lidealabs
+Group=lidealabs
+WorkingDirectory=/opt/lidealabs/current
+EnvironmentFile=/etc/lidealabs/app.env
+ExecStart=/usr/bin/node dist/%i.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/lidealabs
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
