@@ -1,6 +1,7 @@
 import makeWASocket, { DisconnectReason, normalizeMessageContent, useMultiFileAuthState } from '@whiskeysockets/baileys';
 import { adminMessage } from './admin-wa.js';
 import { adminAiMessage } from './admin-ai.js';
+import { readWhatsAppAttachment, supportedAttachment } from './ai-media.js';
 import qrcode from 'qrcode-terminal';
 import type { Pool } from 'pg';
 import { database } from './services.js';
@@ -16,16 +17,20 @@ let stopped = false;
 function bodyText(message: {
   conversation?: string | null;
   extendedTextMessage?: { text?: string | null } | null;
+  imageMessage?: { caption?: string | null } | null;
+  documentMessage?: { caption?: string | null } | null;
 }) {
-  return (message.conversation ?? message.extendedTextMessage?.text ?? '').trim();
+  return (message.conversation ?? message.extendedTextMessage?.text ??
+    message.imageMessage?.caption ?? message.documentMessage?.caption ?? '').trim();
 }
 
-async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, sessionId: string, text: string) {
-  if (!text) return;
-  const adminReply=await adminMessage(pool,sessionId,text);
+async function incoming(sock: ReturnType<typeof makeWASocket>, jid: string, sessionId: string, text: string,
+  loadAttachment?: () => ReturnType<typeof readWhatsAppAttachment>) {
+  const adminReply=text ? await adminMessage(pool,sessionId,text) : null;
   if (adminReply!==null) { await sock.sendMessage(jid,{text:adminReply}); return; }
-  const aiReply=await adminAiMessage(pool,sessionId,text);
+  const aiReply=await adminAiMessage(pool,sessionId,text,loadAttachment);
   if (aiReply!==null) { await sock.sendMessage(jid,{text:aiReply}); return; }
+  if (!text) return;
   const lower = text.toLowerCase().trim();
   if (lower === 'list') {
     await sock.sendMessage(jid, { text: formatCatalog(await listCatalog(pool)) });
@@ -191,7 +196,10 @@ async function connect() {
       const content = normalizeMessageContent(message.message);
       const body = content && bodyText(content);
       console.log(`Pesan masuk: ${jid.endsWith('@lid') ? 'LID' : 'nomor'}, teks: ${body ? 'ya' : 'tidak'}`);
-      if (body) void incoming(sock, jid, sessionId, body).catch(console.error);
+      if (body || supportedAttachment(message)) {
+        const load = supportedAttachment(message) ? () => readWhatsAppAttachment(message) : undefined;
+        void incoming(sock, jid, sessionId, body ?? '', load).catch(console.error);
+      }
     }
   });
   const timer = setInterval(() => {
