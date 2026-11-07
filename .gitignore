@@ -10,3 +10,6 @@ private/
 *.xlsx
 *.xls
 *.catalog.json
+
+__pycache__/
+*.pyc

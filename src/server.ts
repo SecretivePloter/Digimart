@@ -5,6 +5,7 @@ import { listCatalog, productDetail } from './catalog.js';
 import { calculateQuote, feePolicyFromEnv } from './quote.js';
 import { handlePaymentNotice, midtransFromEnv } from './orders.js';
 import type { MidtransNotification } from './midtrans.js';
+import { manualPaymentsActive, verifyManualConfig } from './payment-config.js';
 
 const pool = database();
 const server = createServer(async (request, response) => {
@@ -41,11 +42,16 @@ const server = createServer(async (request, response) => {
   try {
     let body: unknown;
     if (url.pathname === '/health') {
+      await verifyManualConfig();
       const result = await pool.query('SELECT 1 AS connected');
-      body = { ok: result.rows[0]?.connected === 1 };
+      body = { ok: result.rows[0]?.connected === 1, payment_provider: manualPaymentsActive()?'qris_manual':'midtrans', payments_enabled:process.env.PAYMENTS_ENABLED!=='false' };
     } else if (url.pathname === '/catalog') {
       body = await listCatalog(pool);
     } else if (/^\/catalog\/[^/]+\/quote$/.test(url.pathname)) {
+      if (process.env.PAYMENTS_ENABLED === 'false') {
+        response.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'Pembayaran otomatis belum tersedia', code: 'PAYMENTS_DISABLED' }));
+        return;
+      }
       const selector = decodeURIComponent(url.pathname.slice('/catalog/'.length, -'/quote'.length));
       const product = await productDetail(pool, selector);
       if (!product) {
@@ -83,7 +89,7 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(Number(process.env.PORT ?? 3000), () => {
+server.listen(Number(process.env.PORT ?? 3000), process.env.HOST ?? '127.0.0.1', () => {
   console.log('Digimart health server listening');
 });
 

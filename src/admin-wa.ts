@@ -1,12 +1,28 @@
 import type { Pool } from 'pg';
 import { activeAdmin, catalogForAdmin, saveProduct, publicError, type CatalogProduct } from './catalog-manage.js';
+import { pendingManualPayments, reviewManualPayment } from './manual-payments.js';
 export async function adminMessage(pool: Pool, phone: string, text: string): Promise<string | null> {
   if (!/^\/admin(?:\s|$)/i.test(text)) return null;
   if (!await activeAdmin(pool,phone)) return 'Akses admin tidak tersedia untuk pengirim ini.';
   try {
     const [head,...args]=text.split('|').map(s=>s.trim());
     const [,operation='help',slug]=head.split(/\s+/);
+    const orderId=slug?.toUpperCase();
+    if(operation==='pembayaran') return (await pendingManualPayments(pool,phone)).map(o=>`${o.public_id} | Rp${o.total_idr} | ${o.state}\n${o.product_name_snapshot} / ${o.variant_name_snapshot}`).join('\n\n')||'Tidak ada bukti menunggu verifikasi.';
+    if(operation==='antrean') return (await pool.query("SELECT public_id,product_name_snapshot,variant_name_snapshot,fulfillment_email FROM orders WHERE paid_at IS NOT NULL AND status IN ('processing','paid','awaiting_customer_data') ORDER BY paid_at")).rows.map(o=>`${o.public_id}\n${o.product_name_snapshot} / ${o.variant_name_snapshot}\nEmail: ${o.fulfillment_email??'tidak diperlukan'}`).join('\n\n')||'Antrean kosong.';
+    if(['setujui','tolak','periksa'].includes(operation)) {
+      if(!orderId) throw Error('Isi ID pesanan. Ketik /admin help.');
+      return await reviewManualPayment(pool,phone,orderId,operation==='setujui'?'approve':operation==='tolak'?'reject':'review',args[0]??'',args[0]??'');
+    }
+    if(operation==='bukti') {
+      const evidence=(await pool.query("SELECT m.id FROM manual_payment_reviews m JOIN orders o ON o.id=m.order_id WHERE o.public_id=$1",[orderId])).rows[0];
+      if(!evidence) throw Error('Bukti belum tersedia.');
+      await pool.query("INSERT INTO message_outbox(recipient_wa_number,message_type,payload) VALUES($1,'manual_evidence',$2)",[phone,JSON.stringify({review_id:evidence.id,order_id:orderId})]);
+      return 'Bukti diantrekan untuk dikirim ke admin ini. Periksa nominal dan transaksi masuk di GoPay Merchant sebelum menyetujui.';
+    }
     if (operation==='help') return [
+      '*Pembayaran dan pemenuhan*', '/admin pembayaran', '/admin bukti ORD-...', '/admin setujui ORD-... | REFERENSI_GOPAY',
+      '/admin tolak ORD-... | Alasan', '/admin periksa ORD-... | Alasan', '/admin antrean', 'status ORD-...', 'selesai ORD-...',
       '*Kelola katalog*', '/admin list', '/admin lihat slug', '/admin tambah slug | Nama produk',
       '/admin nama slug | Nama baru', '/admin deskripsi slug | Isi deskripsi', '/admin ketentuan slug | Isi ketentuan',
       '/admin varian slug | Nama varian | Harga rupiah',

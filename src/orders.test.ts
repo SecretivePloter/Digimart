@@ -16,7 +16,7 @@ function signed(status: string, amount = '12085.00'): MidtransNotification {
 function fakePool() {
   const state = { orderStatus: 'awaiting_payment', paymentStatus: 'pending', outboxCount: 0 };
   const client = {
-    async query(sql: string) {
+    async query(sql: string, params?: unknown[]) {
       if (sql.includes('SELECT o.id')) return { rows: [{
         id: '1', status: state.orderStatus, total_idr: '12085',
         phone: '6281234567890', variant_name_snapshot: 'Invite 1 Bulan',
@@ -28,7 +28,7 @@ function fakePool() {
         state.paymentStatus = sql.includes("'settlement'") ? 'settlement' : 'expire';
       }
       if (sql.includes('UPDATE orders SET status')) {
-        state.orderStatus = sql.includes("'awaiting_customer_data'") ? 'awaiting_customer_data' : 'expired';
+        state.orderStatus = String(params?.[1] ?? 'expired');
       }
       if (sql.includes('INSERT INTO message_outbox')) state.outboxCount++;
       return { rows: [] };
@@ -42,7 +42,7 @@ test('settlement changes status and queues messages once despite duplicate notif
   const { pool, state } = fakePool();
   await handlePaymentNotice(pool, signed('settlement'), 'test-key');
   await handlePaymentNotice(pool, signed('settlement'), 'test-key');
-  assert.equal(state.orderStatus, 'awaiting_customer_data');
+  assert.equal(state.orderStatus, 'processing');
   assert.equal(state.paymentStatus, 'settlement');
   assert.equal(state.outboxCount, 2);
 });

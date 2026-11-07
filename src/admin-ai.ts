@@ -35,14 +35,14 @@ function requestMessage(text: string, attachment?: AiAttachment): ModelMessage {
   ] };
 }
 
-async function run(pool: Pool, phone: string, text: string, loadAttachment: AttachmentLoader | undefined, reply: Generate) {
+async function run(authPool: Pool, pool: Pool, phone: string, text: string, loadAttachment: AttachmentLoader | undefined, reply: Generate) {
   const toggle = text.trim().toLowerCase() === '.ai';
   const reset = text.trim().toLowerCase() === '.ai reset';
+  if (!await activeAdmin(authPool, phone)) return toggle ? 'Akses AI hanya tersedia untuk admin terdaftar.' : null;
   const mode = await pool.query<{ last_activity: Date }>(
     "SELECT last_activity FROM admin_ai_mode WHERE phone=$1 AND last_activity > now() - interval '2 hours'", [phone]);
   const enabled = !!mode.rowCount;
   if (!enabled && !toggle) return null;
-  if (!await activeAdmin(pool, phone)) return 'Akses AI hanya tersedia untuk admin terdaftar.';
   if (toggle) {
     if (enabled) {
       await pool.query('DELETE FROM admin_ai_mode WHERE phone=$1', [phone]);
@@ -80,16 +80,16 @@ async function run(pool: Pool, phone: string, text: string, loadAttachment: Atta
   return answer.length > 3500 ? answer.slice(0, 3497) + '...' : answer;
 }
 
-export async function adminAiMessage(pool: Pool, phone: string, text: string, loadAttachment?: AttachmentLoader, reply: Generate = generate): Promise<string | null> {
+export async function adminAiMessage(pool: Pool, phone: string, text: string, loadAttachment?: AttachmentLoader, reply: Generate = generate, historyPool: Pool = pool): Promise<string | null> {
   const previous = queues.get(phone) ?? Promise.resolve();
-  const result = previous.catch(() => {}).then(() => run(pool, phone, text, loadAttachment, reply));
+  const result = previous.catch(() => {}).then(() => run(pool, historyPool, phone, text, loadAttachment, reply));
   const done = result.then(() => {}, () => {});
   queues.set(phone, done);
   void done.then(() => { if (queues.get(phone) === done) queues.delete(phone); });
   try { return await result; }
   catch (error) {
     if (error instanceof Error && error.name === 'UnsupportedAiAttachment') return error.message;
-    console.error('Permintaan AI admin gagal:', error);
+    console.error('Permintaan AI admin gagal; periksa koneksi dan konfigurasi privat.');
     return 'AI sedang tidak tersedia. Coba lagi nanti atau periksa konfigurasi API.';
   }
 }

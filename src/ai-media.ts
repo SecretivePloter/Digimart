@@ -43,8 +43,18 @@ export async function readWhatsAppAttachment(message: WAMessage): Promise<AiAtta
   const isTxt = mime === 'text/plain' || (mime === 'application/octet-stream' && !!filename?.toLowerCase().endsWith('.txt'));
   if (image ? !imageTypes.includes(mime) : !(mime === 'application/pdf' || isDocx || isTxt))
     throw new UnsupportedAiAttachment('Format belum didukung. Kirim JPG, PNG, WEBP, PDF, DOCX, atau TXT (maksimal 8 MB).');
-  const data = await downloadMediaMessage(message, 'buffer', {});
-  if (data.length > MAX_BYTES) throw new UnsupportedAiAttachment('Lampiran terlalu besar. Batasnya 8 MB.');
+  const stream = await downloadMediaMessage(message, 'stream', {});
+  const chunks: Buffer[] = [];
+  let received = 0;
+  for await (const chunk of stream) {
+    received += chunk.length;
+    if (received > MAX_BYTES) {
+      stream.destroy();
+      throw new UnsupportedAiAttachment('Lampiran terlalu besar. Batasnya 8 MB.');
+    }
+    chunks.push(chunk);
+  }
+  const data = Buffer.concat(chunks);
   if (isDocx) return { data: Buffer.from(docxText(data)), mediaType: 'text/plain', filename: filename ?? 'dokumen.docx' };
   if (isTxt) return { data: Buffer.from(data.toString('utf8').slice(0, 40_000)), mediaType: 'text/plain', filename: filename ?? 'dokumen.txt' };
   return { data, mediaType: mime, filename };
